@@ -49,7 +49,7 @@ test('two browser contexts pair, route commands to one tab, reconnect both ends 
     await phone.getByRole('button', { name: 'Right →', exact: true }).click();
     await phone.getByRole('button', { name: 'Select', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Album B', exact: true })).toBeVisible();
-    await expect(other.getByRole('heading', { name: 'Good moments. On repeat.' })).toBeVisible();
+    await expect(other.getByRole('heading', { name: 'A little of everything. All in one place.', exact: true, }),).toBeVisible();
     await phone.getByRole('button', { name: 'Play / Pause', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await phone.getByRole('button', { name: 'Play / Pause', exact: true }).click();
