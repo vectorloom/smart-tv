@@ -1,0 +1,60 @@
+# Opt-in Milestone 3 overlay. Do not start before certificate/storage provisioning.
+services:
+  dashboard:
+    environment:
+      Settings__Directory: /app/state
+      Settings__WrappingCertificate: /run/settings-secrets/wrapping.crt
+      Settings__WrappingKey: /run/settings-secrets/wrapping.key
+      Immich__Targets: ${SMART_TV_IMMICH_TARGETS:-http://host.docker.internal:2283/api/}
+      Immich__AllowedAddresses: ${SMART_TV_IMMICH_ADDRESSES:?Set the exact approved Immich IP addresses}
+    volumes:
+      - settings:/app/state:ro
+      - type: bind
+        source: ./.private/material/wrapping.crt
+        target: /run/settings-secrets/wrapping.crt
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./.private/material/wrapping.key
+        target: /run/settings-secrets/wrapping.key
+        read_only: true
+        bind:
+          create_host_path: false
+  admin:
+    profiles: [admin]
+    build: .
+    network_mode: host
+    environment:
+      Administrator__Enabled: "true"
+      Administrator__Port: "8443"
+      Administrator__Certificate: /run/settings-secrets/localhost.crt
+      Administrator__PrivateKey: /run/settings-secrets/localhost.key
+      Settings__Directory: /app/state
+      Settings__WrappingCertificate: /run/settings-secrets/wrapping.crt
+      Settings__WrappingKey: /run/settings-secrets/wrapping.key
+      Immich__BaseUrl: ${IMMICH_URL:-http://host.docker.internal:2283/api/}
+      Immich__ApiKey: ${IMMICH_API_KEY:-}
+      Immich__AlbumIds: ${IMMICH_ALBUM_IDS:-}
+      Immich__Targets: ${SMART_TV_IMMICH_TARGETS:-http://host.docker.internal:2283/api/}
+      Immich__AllowedAddresses: ${SMART_TV_IMMICH_ADDRESSES:?Set the exact approved Immich IP addresses}
+    extra_hosts:
+      - "host.docker.internal:127.0.0.1"
+    volumes:
+      - settings:/app/state
+      - type: bind
+        source: ./.private/material
+        target: /run/settings-secrets
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+volumes:
+  settings:

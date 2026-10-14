@@ -1,0 +1,16 @@
+.git
+.agents
+.codex
+.env
+.local
+**/node_modules
+**/dist
+**/bin
+**/obj
+**/test-results
+**/playwright-report
+
+.private
+**/*.key
+**/*.pfx
+**/*.p12
