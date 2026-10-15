@@ -3,10 +3,8 @@ using System.Text.Json;
 
 namespace SmartTv;
 
-public sealed record WeatherOptions(double Latitude, double Longitude)
+public sealed record WeatherOptions(double Latitude, double Longitude, string Location = "Dallas–Fort Worth")
 {
-    public const string Location = "Dallas–Fort Worth";
-
     public static WeatherOptions FromConfiguration(IConfiguration config)
     {
         static double Coordinate(string? value, double fallback, double min, double max)
@@ -20,7 +18,10 @@ public sealed record WeatherOptions(double Latitude, double Longitude)
 
         return new(
             Coordinate(config["Weather:Latitude"], 32.7767, -90, 90),
-            Coordinate(config["Weather:Longitude"], -96.7970, -180, 180));
+            Coordinate(config["Weather:Longitude"], -96.7970, -180, 180),
+            string.IsNullOrWhiteSpace(config["Weather:Location"])
+                ? "Dallas–Fort Worth"
+                : config["Weather:Location"]!.Trim());
     }
 }
 
@@ -125,7 +126,7 @@ public sealed class WeatherForecastService(HttpClient http, WeatherOptions optio
             dailyTimes[i], dailyHigh[i], dailyLow[i], dailyCodes[i], Describe(dailyCodes[i]),
             i < dailyPrecip.Length ? dailyPrecip[i] : null)).ToArray();
         if (hourlyItems.Length == 0 || days.Length != 7) throw new JsonException("Weather forecast is incomplete.");
-        return new(WeatherOptions.Location, clock.GetUtcNow(), false, currentWeather, hourlyItems, days);
+        return new(options.Location, clock.GetUtcNow(), false, currentWeather, hourlyItems, days);
     }
 
     private static int? NumberOrNull(JsonElement value) => value.ValueKind == JsonValueKind.Number ? (int)Math.Round(value.GetDouble()) : null;
