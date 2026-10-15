@@ -96,8 +96,10 @@ button:focus, select:focus, input:focus, a:focus-visible {
 }
 .wordmark { font-family: Georgia, serif; font-size: 36px; letter-spacing: -1.5px; }
 .wordmark span { color: var(--amber); margin: 0 8px; }
+.header-meta { display: flex; align-items: center; gap: clamp(18px, 2.4vw, 42px); margin-left: auto; }
 .header-label, .header-end { color: var(--muted); font-size: 13px; letter-spacing: 2.5px; }
-.header-end { color: var(--muted-dim); }
+.header-end { display: inline-flex; align-items: center; gap: 9px; color: var(--muted-dim); letter-spacing: 1px; }
+.wifi-icon { width: 22px; height: 22px; fill: none; stroke: var(--amber); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .status-dot { display: inline-block; width: 8px; height: 8px; margin-right: 12px; border-radius: 50%; background: var(--amber); }
 .dashboard > main { flex: 1; padding: 38px 0 32px; }
 .eyebrow { margin-bottom: 14px; color: var(--amber); font-size: 13px; letter-spacing: 2.7px; }
@@ -107,7 +109,7 @@ button:focus, select:focus, input:focus, a:focus-visible {
 .actions { display: flex; flex-shrink: 0; gap: 12px; }
 
 /* Two existing dashboard modules share the 16:9 canvas. */
-.dashboard-layout { display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(430px, .92fr); align-items: start; gap: 22px; }
+.dashboard-layout { display: grid; grid-template-columns: minmax(0, 1.18fr) minmax(430px, .92fr); align-items: stretch; gap: 22px; }
 .collection-panel, .weather-panel {
   min-width: 0;
   padding: 24px;
@@ -268,14 +270,16 @@ kbd:first-child { margin-left: 0; }
   .weather-hourly { grid-template-columns: repeat(auto-fit, minmax(76px, 1fr)); }
   .weather-daily { grid-template-columns: repeat(auto-fit, minmax(72px, 1fr)); }
   .heading-row { align-items: flex-start; flex-direction: column; }
-  .header-end { display: none; }
   .photo-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {
   .dashboard { padding: 0 20px; }
   .dashboard > header { min-height: 82px; gap: 12px; }
   .wordmark { font-size: 27px; }
+  .header-meta { gap: 10px; }
   .header-label { font-size: 9px; letter-spacing: 1px; }
+  .header-end { gap: 5px; font-size: 10px; letter-spacing: 0; }
+  .wifi-icon { width: 17px; height: 17px; }
   .dashboard > main { padding-top: 28px; }
   .dashboard > main .heading-row { margin-bottom: 25px; }
   .heading-row h1 { font-size: 38px; letter-spacing: -1px; }

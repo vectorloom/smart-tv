@@ -103,7 +103,13 @@ export function App() {
       const keys: Record<string, Command> = { ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Enter: 'Select', ' ': 'Select', Escape: 'Back', Backspace: 'Back', Home: 'Home' };
       if (keys[event.key]) { event.preventDefault(); command(keys[event.key]); }
     }}>
-      <header><a className="wordmark" href="/" tabIndex={-1}>still<span> / </span>home</a></header>
+      <header>
+        <a className="wordmark" href="/" tabIndex={-1}>still<span> / </span>home</a>
+        <div className="header-meta">
+          <span className="header-label">YOUR HOME DASHBOARD</span>
+          <span className="header-end"><svg className="wifi-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 8.8a15.8 15.8 0 0 1 20 0M5.5 12.4a10.3 10.3 0 0 1 13 0M9 16a4.8 4.8 0 0 1 6 0M12 20h.01" /></svg>Connected</span>
+        </div>
+      </header>
       <main>
         <div className="eyebrow">{album ? 'THE COLLECTION' : 'YOUR HOME, ON THE BIG SCREEN'}</div>
         <div className="heading-row"><div><h1>{album?.name ?? 'A little of everything. All in one place.'}</h1><p className="subtitle">{album ? `${photos.length} photos${loading ? ' · still loading' : ''} · Find a favorite, or let them play.` : 'Photos, local weather, and the things that make your home yours.'}</p></div>
