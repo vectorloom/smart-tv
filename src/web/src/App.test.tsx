@@ -52,7 +52,7 @@ describe('TV gallery navigation', () => {
     render(<App />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toHaveFocus());
     fireEvent.keyDown(screen.getByRole('button', { name: 'Try again' }), { key: 'Enter' });
-    await screen.findByText('Your collection starts here');
+    await screen.findByText('No accessible albums yet');
     await waitFor(() => expect(screen.getByRole('button', { name: 'Pair phone' })).toHaveFocus());
   });
 });

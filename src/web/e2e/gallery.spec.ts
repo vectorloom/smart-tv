@@ -11,10 +11,15 @@ test.beforeEach(async ({ page }) => {
 
 test('TV remote navigation, photo frame presentation, and focus restoration', async ({ page }) => {
   await page.goto('/');
+  expect(await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight,}))).toEqual({ width: 1920, height: 1080 });
   const album = page.getByRole('button', { name: /Weekend wanderings/ });
   await expect(album).toBeFocused();
+  await expect(album).toHaveCSS('outline-style', 'solid');
+  await expect(album).toHaveCSS('outline-width', '4px');
+  await expect(album).toHaveCSS('outline-color', 'rgb(255, 199, 102)');
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('button', { name: /Everyday favorites/ })).toBeFocused();
+  await expect(page.getByRole('button', { name: /Everyday favorites/ })).toHaveCSS('outline-width', '4px');
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'Play album' })).toBeEnabled();

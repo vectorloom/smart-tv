@@ -111,10 +111,10 @@ export function App() {
         </div>
         {!album ? <div className="dashboard-layout">
           <section className="collection-panel" aria-labelledby="collection-title">
-            <div className="section-label"><h2 id="collection-title">Selected albums</h2><span>{albums.length} COLLECTIONS</span></div>
+            <div className="section-label"><h2 id="collection-title">Albums</h2><span>{albums.length} COLLECTIONS</span></div>
             {error && <div className="notice" role="alert"><h3>We couldn’t load this collection</h3><p>{error}</p><button onClick={() => setReload(value => value + 1)}>Try again</button></div>}
             {loading && <p role="status" className="loading">Opening your collections…</p>}
-            {!loading && !error && albums.length === 0 && <div className="notice"><h3>Your collection starts here</h3><p>Select albums in the dashboard configuration to bring your memories to the screen.</p></div>}
+            {!loading && !error && albums.length === 0 && <div className="notice"><h3>No accessible albums yet</h3><p>Albums owned by or shared with the configured Immich account will appear here.</p></div>}
             <div className="album-grid">{albums.map((item, index) => <AlbumCard key={item.id} item={item} index={index} onSelect={() => { albumFocus.current = item.id; setAlbum(item); }} />)}</div>
           </section>
           <WeatherPanel />

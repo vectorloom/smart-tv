@@ -43,7 +43,7 @@ public sealed class ImmichClient(HttpClient http, ImmichSettings settings)
 
     private void CheckAlbum(Guid id)
     {
-        if (!settings.AlbumIds.Contains(id)) throw new DashboardException(404, "Album not selected.");
+        if (settings.AlbumIds.Count > 0 && !settings.AlbumIds.Contains(id)) throw new DashboardException(404, "Album not selected.");
     }
 
     private async Task<HttpResponseMessage> Send(HttpMethod method, string path, object? body, CancellationToken ct)
@@ -73,10 +73,11 @@ public sealed class ImmichClient(HttpClient http, ImmichSettings settings)
     public async Task<Album[]> Albums(CancellationToken ct)
     {
         CheckConfigured();
-        if (settings.AlbumIds.Count == 0) return [];
-        return (await AccessibleAlbums(ct)).Where(a => settings.AlbumIds.Contains(a.Id))
+        return (await AccessibleAlbums(ct)).Where(IsSelected)
             .Select(a => new Album(a.Id, a.Name, a.AssetCount, a.ThumbnailId)).ToArray();
     }
+
+    private bool IsSelected(AdminAlbum album) => settings.AlbumIds.Count == 0 || settings.AlbumIds.Contains(album.Id);
 
     public async Task<AdminAlbum[]> AccessibleAlbums(CancellationToken ct)
     {
@@ -120,6 +121,8 @@ public sealed class ImmichClient(HttpClient http, ImmichSettings settings)
     private async Task<JsonDocument> Search(Guid album, int page, Guid? asset, CancellationToken ct)
     {
         CheckAlbum(album);
+        if (settings.AlbumIds.Count == 0 && !(await AccessibleAlbums(ct)).Any(a => a.Id == album))
+            throw new DashboardException(404, "Album not accessible.");
         var query = new Dictionary<string, object>
         {
             ["albumIds"] = new[] { album }, ["type"] = "IMAGE", ["page"] = page,

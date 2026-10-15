@@ -47,10 +47,44 @@ public class ImmichClientTests
     }
 
     [Fact]
-    public async Task EmptySelectionExposesNothingAndMakesNoRequest()
+    public async Task EmptySelectionReturnsAllAccessibleAlbums()
     {
-        var client = Client(_ => throw new Exception("Unexpected upstream call"), albums: []);
+        var requests = 0;
+        var client = Client(request =>
+        {
+            requests++;
+            var shared = request.RequestUri!.Query == "?isShared=true";
+            return Task.FromResult(Json(shared ? new[] {
+                new { id = Other, albumName = "New shared album", assetCount = 3, albumThumbnailAssetId = (Guid?)null }
+            } : new[] {
+                new { id = AlbumId, albumName = "Memories", assetCount = 2, albumThumbnailAssetId = (Guid?)AssetId }
+            }));
+        }, albums: []);
+        var result = await client.Albums(Ct);
+        Assert.Equal(2, result.Length);
+        Assert.Equal(2, requests);
+        Assert.Contains(result, album => album.Id == Other);
+    }
+
+    [Fact]
+    public async Task EmptySelectionWithNoAccessibleAlbumsReturnsEmpty()
+    {
+        var client = Client(_ => Task.FromResult(Json(Array.Empty<object>())), albums: []);
         Assert.Empty(await client.Albums(Ct));
+    }
+
+    [Fact]
+    public async Task EmptySelectionRefreshIncludesNewlyAccessibleAlbums()
+    {
+        var count = 0;
+        var client = Client(_ =>
+        {
+            count++;
+            var id = count < 3 ? AlbumId : Other;
+            return Task.FromResult(Json(new[] { new { id, albumName = "Album", assetCount = 1, albumThumbnailAssetId = (Guid?)null } }));
+        }, albums: []);
+        Assert.Equal(AlbumId, Assert.Single(await client.Albums(Ct)).Id);
+        Assert.Equal(Other, Assert.Single(await client.Albums(Ct)).Id);
     }
 
     [Fact]
@@ -78,6 +112,36 @@ public class ImmichClientTests
         var client = Client(_ => throw new Exception("Unexpected upstream call"));
         var error = await Assert.ThrowsAsync<DashboardException>(() => client.Photos(Other, 1, Ct));
         Assert.Equal(404, error.Status);
+    }
+
+    [Fact]
+    public async Task EmptySelectionPhotosRequireAlbumToBeAccessible()
+    {
+        var calls = 0;
+        var client = Client(request =>
+        {
+            calls++;
+            return Task.FromResult(request.RequestUri!.Query.Contains("isOwned") || request.RequestUri.Query.Contains("isShared")
+                ? Json(Array.Empty<object>()) : Json(Search([])));
+        }, albums: []);
+        var error = await Assert.ThrowsAsync<DashboardException>(() => client.Photos(Other, 1, Ct));
+        Assert.Equal(404, error.Status);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task EmptySelectionImagesRequireAlbumToBeAccessible()
+    {
+        var calls = 0;
+        var client = Client(request =>
+        {
+            calls++;
+            return Task.FromResult(request.RequestUri!.Query.Contains("isOwned") || request.RequestUri.Query.Contains("isShared")
+                ? Json(Array.Empty<object>()) : Json(Search([])));
+        }, albums: []);
+        var error = await Assert.ThrowsAsync<DashboardException>(() => client.Image(Other, AssetId, "thumbnail", Ct));
+        Assert.Equal(404, error.Status);
+        Assert.Equal(2, calls);
     }
 
     [Fact]
