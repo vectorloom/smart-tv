@@ -97,6 +97,8 @@ public static class DashboardHost
             app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
             app.MapGet("/api/weather", async (WeatherForecastService weather, CancellationToken ct) =>
                 Results.Ok(await weather.GetForecast(ct)));
+            app.MapGet("/api/weather/wind", async (WeatherForecastService weather, CancellationToken ct) =>
+                Results.Ok(await weather.GetRegionalWind(ct)));
             app.MapGet("/api/albums", (ImmichClient client, CancellationToken ct) => client.Albums(ct));
             app.MapGet("/api/albums/{album:guid}/photos", (Guid album, int? page, ImmichClient client, CancellationToken ct) => client.Photos(album, page ?? 1, ct));
             app.MapGet("/api/albums/{album:guid}/photos/{asset:guid}/image", async (Guid album, Guid asset, string? size, ImmichClient client, HttpContext context, CancellationToken ct) => {
