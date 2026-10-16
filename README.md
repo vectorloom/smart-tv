@@ -27,6 +27,8 @@ The server sends the key in the `x-api-key` header. Only `thumbnail` and `previe
 The administrator interface is separate from the TV/remote listener. Read the
 [certificate and Windows trust plan](docs/administrator-tls.md), then the
 [deployment, migration, backup, and tested recovery guide](docs/settings-operations.md).
+For the local-build, SSH image-transfer deployment workflow, see
+[Dashboard deployment](docs/deployment.md).
 The intended Windows URL is `https://localhost:18443/settings` through an existing
 SSH tunnel. There is no default password, unauthenticated setup API, or certificate
 warning bypass. No production certificates or administrator credentials were
@@ -199,19 +201,27 @@ PLAYWRIGHT_BROWSERS_PATH=../../.local/playwright npm run test:browser
 
 Do not use `playwright install --with-deps` on this host; it installs system packages. Browser tests verify TV-sized keyboard operation and mobile overflow. They also use two independent browser contexts against the real WebSocket endpoint to verify pairing, command delivery, tab isolation, transport reconnection, and unpairing. API tests cover expiry, rate limits, authorization, malformed messages, credential revocation, and disconnected delivery. Their screenshots and reports are ignored build artifacts.
 
-## Deployment — pending approval
+## Deployment
 
-The multi-stage Dockerfile builds the locked frontend dependencies, publishes the ASP.NET API, and serves both from one runtime image. Milestone 1 is already deployed; no Docker build or container startup has been performed during Milestone 2 implementation.
-
-For Milestone 3, follow the overlay, certificate, and migration steps in [the operator guide](docs/settings-operations.md) after separate deployment approval. The commands below deploy **environment-only mode**, without administrator settings or persistence:
+See [the deployment guide](docs/deployment.md) for prerequisites and the
+dashboard-only SSH image-transfer workflow. Check a reviewed revision locally
+without connecting to production:
 
 ```bash
-docker compose config --quiet
-docker compose build
-docker compose up -d
+scripts/deploy.sh --dry-run "$(git rev-parse HEAD)"
 ```
 
-These are documentation only, not steps executed for Milestone 2. The project name is explicitly `smart-tv`; application host port is 8080. Do not change existing Compose files or run these commands in another service's directory. Use `config --quiet`, because ordinary expanded Compose output would include the configured key.
+Run the read-only production preflight without building or deploying:
+
+```bash
+scripts/deploy.sh --preflight-only "$(git rev-parse HEAD)"
+```
+
+Deploy only after reviewing the clean checkout and full commit SHA:
+
+```bash
+scripts/deploy.sh <full-commit-sha>
+```
 
 ## Files
 
