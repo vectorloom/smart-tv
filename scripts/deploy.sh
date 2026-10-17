@@ -101,7 +101,8 @@ fi
 workdir=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$expected_container")
 [[ $workdir == "$expected_dir" ]] || { echo 'preflight: running dashboard uses a different Compose directory' >&2; exit 54; }
 files=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$expected_container")
-[[ ,$files, == *,compose.yaml,* && ,$files, == *,compose.settings.yaml,* ]] || { echo 'preflight: running dashboard does not use the expected Compose files' >&2; exit 55; }
+expected_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/projects/smart-tv/compose.settings.yaml'
+[[ $files == "$expected_files" ]] || { echo 'preflight: running dashboard does not use the expected Compose files' >&2; exit 55; }
 [[ $(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$expected_container" | grep -c '^Immich__ApiKey=.') -eq 1 ]] || {
   # The key may be persisted in the protected settings volume instead of the environment.
   [[ $(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/app/state"}}{{.Name}}{{end}}{{end}}' "$expected_container") == smart-tv_settings ]] || {
@@ -234,7 +235,8 @@ if ! compose config --quiet >/dev/null 2>&1; then echo 'deploy: Compose validati
 [[ $(docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$container") == dashboard ]] || { echo 'deploy: dashboard service changed after preflight' >&2; exit 62; }
 [[ $(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$container") == "$dir" ]] || { echo 'deploy: dashboard working directory changed after preflight' >&2; exit 62; }
 files=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$container")
-[[ ,$files, == *,compose.yaml,* && ,$files, == *,compose.settings.yaml,* ]] || { echo 'deploy: dashboard Compose files changed after preflight' >&2; exit 62; }
+expected_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/projects/smart-tv/compose.settings.yaml'
+[[ $files == "$expected_files" ]] || { echo 'deploy: dashboard Compose files changed after preflight' >&2; exit 62; }
 [[ $(docker ps --filter "name=^/${container}$" --filter 'status=running' --format '{{.Names}}') == "$container" ]] || { echo 'deploy: dashboard is no longer running' >&2; exit 63; }
 new_ref="$image:$sha"
 new_id=$(docker image inspect --format '{{.Id}}' "$new_ref") || { echo 'deploy: transferred image is unavailable' >&2; exit 64; }

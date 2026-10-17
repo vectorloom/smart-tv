@@ -61,6 +61,30 @@ expect_fail() {
   fi
 }
 
+# Docker Compose records the config_files label as an ordered, comma-separated
+# list of absolute paths. Keep the production checks exact and exercise the
+# accepted label plus missing, extra, and unexpected path cases here.
+expected_config_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/projects/smart-tv/compose.settings.yaml'
+label_matches_expected_files() { [[ $1 == "$expected_config_files" ]]; }
+label_matches_expected_files '/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/projects/smart-tv/compose.settings.yaml' || {
+  echo 'FAIL: actual absolute Compose config_files label was rejected' >&2; exit 1;
+}
+for invalid_files in \
+  '/home/lazyboy/projects/smart-tv/compose.yaml' \
+  '/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/projects/smart-tv/compose.settings.yaml,/home/lazyboy/projects/smart-tv/extra.yaml' \
+  '/tmp/compose.yaml,/home/lazyboy/projects/smart-tv/compose.settings.yaml'; do
+  if label_matches_expected_files "$invalid_files"; then
+    printf 'FAIL: unexpected Compose config_files label was accepted: %s\n' "$invalid_files" >&2
+    exit 1
+  fi
+done
+[[ $(grep -Fc '[[ $files == "$expected_files" ]]' scripts/deploy.sh) -eq 2 ]] || {
+  echo 'FAIL: both production checks must compare the complete expected Compose path list' >&2; exit 1;
+}
+grep -Fq "expected_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/projects/smart-tv/compose.settings.yaml'" scripts/deploy.sh || {
+  echo 'FAIL: production Compose path list is not pinned to the known directory and order' >&2; exit 1;
+}
+
 expect_fail 'missing argument' scripts/deploy.sh
 expect_fail 'malformed SHA' scripts/deploy.sh abc
 expect_fail 'SHA does not match HEAD' env DEPLOY_TEST_HEAD=ffffffffffffffffffffffffffffffffffffffff scripts/deploy.sh --dry-run "$sha"
