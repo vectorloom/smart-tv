@@ -61,6 +61,25 @@ expect_fail() {
   fi
 }
 
+source scripts/platform.sh
+[[ $(normalize_platform linux/amd64) == "$(normalize_platform linux/x86_64)" ]] || {
+  echo 'FAIL: linux/amd64 and linux/x86_64 should normalize identically' >&2; exit 1;
+}
+[[ $(normalize_platform linux/arm64) == "$(normalize_platform linux/aarch64)" ]] || {
+  echo 'FAIL: linux/arm64 and linux/aarch64 should normalize identically' >&2; exit 1;
+}
+for platform_pair in 'linux/arm64 linux/amd64' 'windows/amd64 linux/amd64'; do
+  read -r left_platform right_platform <<<"$platform_pair"
+  if platforms_equal "$left_platform" "$right_platform"; then
+    printf 'FAIL: different platforms were accepted: %s\n' "$platform_pair" >&2; exit 1
+  fi
+done
+for invalid_platform in '' linux linux/ /amd64 linux/amd64/extra Linux/amd64; do
+  if normalize_platform "$invalid_platform" >/dev/null 2>&1; then
+    printf 'FAIL: malformed platform was accepted: %s\n' "$invalid_platform" >&2; exit 1
+  fi
+done
+
 # Docker Compose records the config_files label as an ordered, comma-separated
 # list of absolute paths. Keep the production checks exact and exercise the
 # accepted label plus missing, extra, and unexpected path cases here.
@@ -149,7 +168,9 @@ grep -Fq 'compose -f "$dir/compose.yaml" -f "$dir/compose.settings.yaml" -f "$ov
 grep -Fq 'canonical(running) != canonical(expected)' scripts/preflight-runtime.py || { echo 'FAIL: explicit Compose and running image refs are not compared' >&2; exit 1; }
 grep -Fq 'normalize_id(image_ids[0]) != normalize_id(inspect.get("Image", ""))' scripts/preflight-runtime.py || { echo 'FAIL: normalized Compose dashboard image ID is not matched to its running container' >&2; exit 1; }
 grep -Fq 'runtime configuration changed or cannot be validated' scripts/deploy.sh || { echo 'FAIL: runtime configuration is not revalidated before recreation' >&2; exit 1; }
-grep -Fq 'local_platform == "$remote_platform"' scripts/deploy.sh || { echo 'FAIL: local/remote image platform check missing' >&2; exit 1; }
+grep -Fq 'normalized_local_platform == "$normalized_remote_platform"' scripts/deploy.sh || { echo 'FAIL: normalized local/remote image platform check missing' >&2; exit 1; }
+grep -Fq 'normalized_new_platform == "$normalized_remote_platform"' scripts/deploy.sh || { echo 'FAIL: normalized post-transfer image platform check missing' >&2; exit 1; }
+grep -Fq 'normalize_platform "$platform" >/dev/null' scripts/deploy.sh || { echo 'FAIL: preflight does not reject malformed Docker platform values' >&2; exit 1; }
 grep -Fq 'local_revision == "$sha"' scripts/deploy.sh || { echo 'FAIL: source revision image label is not verified' >&2; exit 1; }
 grep -Fq 'revision image tag already exists' scripts/deploy.sh || { echo 'FAIL: existing remote SHA image tag could be overwritten' >&2; exit 1; }
 grep -Fq 'docker info >/dev/null 2>&1 || exit 71' scripts/deploy.sh || { echo 'FAIL: remote Docker verification does not fail closed' >&2; exit 1; }

@@ -61,10 +61,12 @@ if [[ -n $(git status --porcelain=v1 --untracked-files=all 2>/dev/null) ]]; then
 fi
 
 for required in Dockerfile .dockerignore compose.yaml compose.settings.yaml \
-  scripts/validate-production-bind.sh scripts/test-api.sh scripts/build-test-host.sh scripts/test-browser.sh; do
+  scripts/platform.sh scripts/validate-production-bind.sh scripts/test-api.sh scripts/build-test-host.sh scripts/test-browser.sh; do
   [[ -f $required ]] || die "required repository file is missing: $required"
 done
+source "$script_dir/platform.sh"
 production_bind_address=$(bash "$script_dir/validate-production-bind.sh" "$EXPECTED_BIND_ADDRESS") || die 'production bind address could not be established safely'
+platform_helper_b64=$(base64 <"$script_dir/platform.sh" | tr -d '\n')
 
 if $dry_run; then
   printf 'Dry run: local revision %s matches clean HEAD.\n' "$sha"
@@ -78,13 +80,16 @@ remote_preflight() {
 # This check is read-only. Compose receives the known, previously exported
 # non-secret setting. Its resolved configuration must match the live dashboard.
 validator_b64=$(base64 <"$script_dir/preflight-runtime.py" | tr -d '\n')
-remote_preflight=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$EXPECTED_CONTAINER" "$REMOTE_DIR" "$production_bind_address" "$validator_b64" <<'REMOTE_PREFLIGHT'
+remote_preflight=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$EXPECTED_CONTAINER" "$REMOTE_DIR" "$production_bind_address" "$validator_b64" "$platform_helper_b64" <<'REMOTE_PREFLIGHT'
 set -Eeuo pipefail
 expected_container=$1
 expected_dir='/home/lazyboy/projects/smart-tv'
 bind_address=$3
 validator_b64=$4
+platform_helper_b64=$5
 [[ $bind_address == 10.0.0.11 ]] || { echo 'preflight: production bind address is missing or unexpected' >&2; exit 40; }
+platform_helper=$(printf '%s' "$platform_helper_b64" | base64 -d) || { echo 'preflight: cannot load platform validator' >&2; exit 58; }
+eval "$platform_helper" || { echo 'preflight: cannot load platform validator' >&2; exit 58; }
 [[ $2 == "$expected_dir" ]] || exit 40
 host_ips=$(hostname -I 2>/dev/null) || { echo 'preflight: cannot identify SSH host' >&2; exit 41; }
 host_matches=false
@@ -116,7 +121,7 @@ expected_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/proje
   }
 }
 platform=$(docker info --format '{{.OSType}}/{{.Architecture}}' 2>/dev/null) || { echo 'preflight: cannot inspect remote Docker platform' >&2; exit 57; }
-[[ $platform == */* ]] || { echo 'preflight: invalid remote Docker platform' >&2; exit 58; }
+normalize_platform "$platform" >/dev/null || { echo 'preflight: invalid remote Docker platform' >&2; exit 58; }
 # Validate resolved runtime configuration against the currently running service
 # in memory. The validator reports mismatch categories and non-secret metadata;
 # Compose's expanded configuration is never written to a file or emitted.
@@ -168,8 +173,9 @@ fi
 printf 'Building %s...\n' "$image_ref"
 docker build --label "org.opencontainers.image.revision=$sha" --tag "$image_ref" --file "$repo_root/Dockerfile" "$repo_root"
 local_platform=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image_ref") || die 'cannot inspect the locally built image'
-[[ $local_platform == */* ]] || die 'could not determine the local image platform'
-[[ $local_platform == "$remote_platform" ]] || die "image platform mismatch (local $local_platform, remote $remote_platform)"
+normalized_local_platform=$(normalize_platform "$local_platform") || die "invalid local image platform: $local_platform"
+normalized_remote_platform=$(normalize_platform "$remote_platform") || die "invalid remote Docker platform: $remote_platform"
+[[ $normalized_local_platform == "$normalized_remote_platform" ]] || die "image platform mismatch (local $local_platform, remote $remote_platform)"
 local_revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image_ref") || die 'cannot inspect the image revision label'
 [[ $local_revision == "$sha" ]] || die 'local image revision label does not match the requested SHA'
 
@@ -181,7 +187,7 @@ fi
 # Deployment and rollback run remotely. The temporary Compose override lives in
 # /tmp, not the checkout, and lets Compose use the immutable SHA tag without
 # replacing the previous Compose image tag.
-if ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$sha" "$image_repo" "$EXPECTED_CONTAINER" "$HEALTH_URL" "$HEALTH_ATTEMPTS" "$production_bind_address" <<'REMOTE_DEPLOY'
+if ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$sha" "$image_repo" "$EXPECTED_CONTAINER" "$HEALTH_URL" "$HEALTH_ATTEMPTS" "$production_bind_address" "$platform_helper_b64" <<'REMOTE_DEPLOY'
 set -Eeuo pipefail
 sha=$1
 image=$2
@@ -189,8 +195,11 @@ container=$3
 health_url=$4
 attempts=$5
 bind_address=$6
+platform_helper_b64=$7
 dir='/home/lazyboy/projects/smart-tv'
 [[ $bind_address == 10.0.0.11 ]] || { echo 'deploy: production bind address is missing or unexpected' >&2; exit 60; }
+platform_helper=$(printf '%s' "$platform_helper_b64" | base64 -d) || { echo 'deploy: cannot load platform validator' >&2; exit 64; }
+eval "$platform_helper" || { echo 'deploy: cannot load platform validator' >&2; exit 64; }
 cd -- "$dir"
 compose() {
   env -i PATH="$PATH" HOME="$HOME" SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND="$bind_address" docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
@@ -242,7 +251,9 @@ except Exception:
 new_platform=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$new_ref") || exit 64
 new_revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$new_ref") || exit 64
 remote_platform=$(docker info --format '{{.OSType}}/{{.Architecture}}') || exit 64
-[[ $new_platform == "$remote_platform" ]] || { echo 'deploy: transferred image platform mismatch' >&2; exit 65; }
+normalized_new_platform=$(normalize_platform "$new_platform") || { echo 'deploy: invalid transferred image platform' >&2; exit 65; }
+normalized_remote_platform=$(normalize_platform "$remote_platform") || { echo 'deploy: invalid remote Docker platform' >&2; exit 65; }
+[[ $normalized_new_platform == "$normalized_remote_platform" ]] || { echo 'deploy: transferred image platform mismatch' >&2; exit 65; }
 [[ $new_revision == "$sha" ]] || { echo 'deploy: transferred image revision label mismatch' >&2; exit 65; }
 old_id=$(docker inspect --format '{{.Image}}' "$container") || exit 66
 old_short=${old_id#sha256:}; old_short=${old_short:0:12}
