@@ -149,11 +149,11 @@ npm run build --prefix src/web
 printf 'Running frontend unit tests...\n'
 npm test --prefix src/web
 printf 'Running API tests...\n'
-scripts/test-api.sh
+bash scripts/test-api.sh
 printf 'Building browser test host...\n'
-scripts/build-test-host.sh
+bash scripts/build-test-host.sh
 printf 'Running browser tests...\n'
-scripts/test-browser.sh
+bash scripts/test-browser.sh
 
 result=$(remote_preflight) || die 'remote read-only preflight failed; no production changes were made'
 IFS=$'\t' read -r remote_platform image_repo <<<"$result"

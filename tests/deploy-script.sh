@@ -95,6 +95,15 @@ for invalid_bind in '' 127.0.0.1 0.0.0.0 10.0.0.12; do
   fi
 done
 
+actual_shell_tests=$(grep -E '^bash scripts/(test-api|build-test-host|test-browser)\.sh$' scripts/deploy.sh)
+expected_shell_tests=$'bash scripts/test-api.sh\nbash scripts/build-test-host.sh\nbash scripts/test-browser.sh'
+[[ $actual_shell_tests == "$expected_shell_tests" ]] || {
+  echo 'FAIL: deployment shell tests must run through Bash in the existing order' >&2; exit 1;
+}
+! grep -Eq '^scripts/(test-api|build-test-host|test-browser)\.sh$' scripts/deploy.sh || {
+  echo 'FAIL: deployment directly invokes a shell test script' >&2; exit 1;
+}
+
 expect_fail 'missing argument' scripts/deploy.sh
 expect_fail 'malformed SHA' scripts/deploy.sh abc
 expect_fail 'SHA does not match HEAD' env DEPLOY_TEST_HEAD=ffffffffffffffffffffffffffffffffffffffff scripts/deploy.sh --dry-run "$sha"
