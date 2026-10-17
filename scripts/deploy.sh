@@ -226,27 +226,48 @@ import json, os, sys
 try:
     config=json.load(sys.stdin); service=config["services"]["dashboard"]
     inspect=json.loads(__import__("subprocess").check_output(["docker","inspect","smart-tv-dashboard-1"],text=True))[0]
+    failures=[]
+    def mismatch(category, detail):
+        failures.append(category)
+        print(f"deploy: runtime mismatch [{category}]: {detail}",file=sys.stderr)
     canonical=lambda name: name if "@" in name or ":" in name.rsplit("/",1)[-1] else name+":latest"
     running=inspect["Config"]["Image"]; expected=service.get("image")
-    if expected and canonical(expected)!=canonical(running): raise ValueError()
-    if canonical(running) not in {canonical(n) for n in os.environ["COMPOSE_IMAGE_LIST"].splitlines()}: raise ValueError()
-    if os.environ["COMPOSE_SERVICE_IMAGE_IDS"].splitlines()!=[inspect["Image"]]: raise ValueError()
+    if expected and canonical(expected)!=canonical(running):
+        mismatch("image identity", "rendered service reference differs from the running reference")
+    if canonical(running) not in {canonical(n) for n in os.environ["COMPOSE_IMAGE_LIST"].splitlines()}:
+        mismatch("image identity", "running reference is absent from the Compose image list")
+    if os.environ["COMPOSE_SERVICE_IMAGE_IDS"].splitlines()!=[inspect["Image"]]:
+        mismatch("image identity", "Compose dashboard image ID differs from the running container image ID")
     desired={str(k):str(v) for k,v in service.get("environment",{}).items()}
     current=dict(item.split("=",1) for item in inspect["Config"].get("Env",[]) if "=" in item)
     image_config=json.loads(__import__("subprocess").check_output(["docker","image","inspect",os.environ["NEW_IMAGE_ID"]],text=True))[0]
     expected=dict(item.split("=",1) for item in image_config["Config"].get("Env",[]) if "=" in item); expected.update(desired)
-    if current!=expected: raise ValueError()
-    if not any(str(p.get("published"))=="8080" and str(p.get("target"))=="8080" and p.get("host_ip")==os.environ["EXPECTED_BIND_ADDRESS"] for p in service.get("ports",[])): raise ValueError()
+    missing=sorted(expected.keys()-current.keys())
+    extra=sorted(current.keys()-expected.keys())
+    different=sorted(k for k in expected.keys()&current.keys() if expected[k]!=current[k])
+    if missing or extra or different:
+        mismatch("environment", f"missing names={missing!r}; extra names={extra!r}; mismatched names={different!r}")
+    ports=service.get("ports",[])
+    if not any(str(p.get("published"))=="8080" and str(p.get("target"))=="8080" and p.get("host_ip")==os.environ["EXPECTED_BIND_ADDRESS"] for p in ports):
+        rendered=[(p.get("host_ip"),p.get("published"),p.get("target")) for p in ports]
+        mismatch("port binding", f"expected {os.environ['EXPECTED_BIND_ADDRESS']}:8080->8080; rendered={rendered!r}")
     mounts=inspect.get("Mounts",[])
-    if not any(m.get("Name")=="smart-tv_settings" and m.get("Destination")=="/app/state" and not m.get("RW") for m in mounts): raise ValueError()
+    if not any(m.get("Name")=="smart-tv_settings" and m.get("Destination")=="/app/state" and not m.get("RW") for m in mounts):
+        observed=[(m.get("Name") or m.get("Type"),"rw" if m.get("RW") else "ro") for m in mounts if m.get("Destination")=="/app/state"]
+        mismatch("settings volume", f"destination=/app/state; observed identity/mode={observed!r}; expected=[('smart-tv_settings','ro')]")
     wanted={"/run/settings-secrets/wrapping.crt","/run/settings-secrets/wrapping.key"}
     desired_mounts={m.get("target"):m for m in service.get("volumes",[])}
     current_mounts={m.get("Destination"):m for m in mounts}
     for target in wanted:
-        d=desired_mounts[target]; c=current_mounts[target]
-        if d.get("type")!="bind" or not d.get("read_only") or c.get("Source")!=d.get("source") or c.get("RW"): raise ValueError()
+        d=desired_mounts.get(target); c=current_mounts.get(target)
+        rendered_ok=bool(d and d.get("type")=="bind" and d.get("read_only"))
+        identity_matches=bool(d and c and c.get("Source")==d.get("source"))
+        running_mode="rw" if c and c.get("RW") else "ro" if c else "missing"
+        if not rendered_ok or not identity_matches or not c or c.get("RW"):
+            mismatch("certificate mount", f"destination={target!r}; rendered_bind_read_only={rendered_ok}; running_mode={running_mode}; source_identity_matches={identity_matches}")
+    if failures: sys.exit(1)
 except Exception:
-    print("deploy: runtime configuration changed or cannot be validated",file=sys.stderr); sys.exit(1)
+    print("deploy: runtime mismatch [validator]: configuration or Docker inspection could not be validated",file=sys.stderr); sys.exit(1)
 '; then exit 64; fi
 new_platform=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$new_ref") || exit 64
 new_revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$new_ref") || exit 64

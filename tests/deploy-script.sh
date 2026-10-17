@@ -104,6 +104,7 @@ grep -Fq "expected_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/laz
   echo 'FAIL: production Compose path list is not pinned to the known directory and order' >&2; exit 1;
 }
 python3 tests/preflight-runtime.py
+python3 tests/deploy-runtime-diagnostics.py
 [[ $(bash scripts/validate-production-bind.sh 10.0.0.11) == 10.0.0.11 ]] || {
   echo 'FAIL: approved production bind address was not resolved' >&2; exit 1;
 }
@@ -167,7 +168,8 @@ grep -Fq 'compose -f "$dir/compose.yaml" -f "$dir/compose.settings.yaml" -f "$ov
 ! grep -Eq 'docker (image )?rm|docker rmi' scripts/deploy.sh || { echo 'FAIL: script may remove an image before health checks' >&2; exit 1; }
 grep -Fq 'canonical(running) != canonical(expected)' scripts/preflight-runtime.py || { echo 'FAIL: explicit Compose and running image refs are not compared' >&2; exit 1; }
 grep -Fq 'normalize_id(image_ids[0]) != normalize_id(inspect.get("Image", ""))' scripts/preflight-runtime.py || { echo 'FAIL: normalized Compose dashboard image ID is not matched to its running container' >&2; exit 1; }
-grep -Fq 'runtime configuration changed or cannot be validated' scripts/deploy.sh || { echo 'FAIL: runtime configuration is not revalidated before recreation' >&2; exit 1; }
+grep -Fq 'runtime mismatch [validator]' scripts/deploy.sh || { echo 'FAIL: unexpected runtime validation failures do not fail closed' >&2; exit 1; }
+grep -Fq 'mismatch("certificate mount"' scripts/deploy.sh || { echo 'FAIL: runtime validator lacks sanitized certificate-mount diagnostics' >&2; exit 1; }
 grep -Fq 'normalized_local_platform == "$normalized_remote_platform"' scripts/deploy.sh || { echo 'FAIL: normalized local/remote image platform check missing' >&2; exit 1; }
 grep -Fq 'normalized_new_platform == "$normalized_remote_platform"' scripts/deploy.sh || { echo 'FAIL: normalized post-transfer image platform check missing' >&2; exit 1; }
 grep -Fq 'normalize_platform "$platform" >/dev/null' scripts/deploy.sh || { echo 'FAIL: preflight does not reject malformed Docker platform values' >&2; exit 1; }
