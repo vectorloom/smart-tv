@@ -219,9 +219,13 @@ expected_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/proje
 [[ $(docker ps --filter "name=^/${container}$" --filter 'status=running' --format '{{.Names}}') == "$container" ]] || { echo 'deploy: dashboard is no longer running' >&2; exit 63; }
 new_ref="$image:$sha"
 new_id=$(docker image inspect --format '{{.Id}}' "$new_ref") || { echo 'deploy: transferred image is unavailable' >&2; exit 64; }
-images=$(compose config --images 2>/dev/null) || { echo 'deploy: cannot revalidate Compose images' >&2; exit 64; }
-service_image_ids=$(compose images -q dashboard 2>/dev/null) || { echo 'deploy: cannot revalidate dashboard image' >&2; exit 64; }
-if ! compose config --format json 2>/dev/null | COMPOSE_IMAGE_LIST="$images" COMPOSE_SERVICE_IMAGE_IDS="$service_image_ids" NEW_IMAGE_ID="$new_id" EXPECTED_BIND_ADDRESS="$bind_address" python3 -c '
+override=$(mktemp /tmp/smart-tv-dashboard-image.XXXXXX.yaml)
+log=$(mktemp /tmp/smart-tv-dashboard-compose.XXXXXX.log)
+cleanup() { rm -f -- "$override" "$log"; }
+trap cleanup EXIT
+write_override() { printf 'services:\n  dashboard:\n    image: "%s"\n' "$1" >"$override"; chmod 600 "$override"; }
+write_override "$new_ref"
+if ! compose -f "$override" config --format json 2>/dev/null | NEW_IMAGE_REF="$new_ref" NEW_IMAGE_ID="$new_id" EXPECTED_BIND_ADDRESS="$bind_address" python3 -c '
 import json, os, sys
 try:
     config=json.load(sys.stdin); service=config["services"]["dashboard"]
@@ -230,14 +234,18 @@ try:
     def mismatch(category, detail):
         failures.append(category)
         print(f"deploy: runtime mismatch [{category}]: {detail}",file=sys.stderr)
+    effective_ref=service.get("image")
+    expected_ref=os.environ["NEW_IMAGE_REF"]
     canonical=lambda name: name if "@" in name or ":" in name.rsplit("/",1)[-1] else name+":latest"
-    running=inspect["Config"]["Image"]; expected=service.get("image")
-    if expected and canonical(expected)!=canonical(running):
-        mismatch("image identity", "rendered service reference differs from the running reference")
-    if canonical(running) not in {canonical(n) for n in os.environ["COMPOSE_IMAGE_LIST"].splitlines()}:
-        mismatch("image identity", "running reference is absent from the Compose image list")
-    if os.environ["COMPOSE_SERVICE_IMAGE_IDS"].splitlines()!=[inspect["Image"]]:
-        mismatch("image identity", "Compose dashboard image ID differs from the running container image ID")
+    if not effective_ref or canonical(effective_ref)!=canonical(expected_ref):
+        mismatch("image identity", "effective Compose image reference does not match the transferred SHA image")
+    try:
+        effective_id=json.loads(__import__("subprocess").check_output(["docker","image","inspect",effective_ref],text=True))[0]["Id"] if effective_ref else ""
+    except Exception:
+        effective_id=""
+        mismatch("image identity", "effective Compose image reference cannot be resolved to a local image ID")
+    if effective_id!=os.environ["NEW_IMAGE_ID"]:
+        mismatch("image identity", "effective Compose image ID differs from the transferred image ID")
     desired={str(k):str(v) for k,v in service.get("environment",{}).items()}
     current=dict(item.split("=",1) for item in inspect["Config"].get("Env",[]) if "=" in item)
     image_config=json.loads(__import__("subprocess").check_output(["docker","image","inspect",os.environ["NEW_IMAGE_ID"]],text=True))[0]
@@ -279,11 +287,6 @@ normalized_remote_platform=$(normalize_platform "$remote_platform") || { echo 'd
 old_id=$(docker inspect --format '{{.Image}}' "$container") || exit 66
 old_short=${old_id#sha256:}; old_short=${old_short:0:12}
 other_containers=$(docker ps --filter 'label=com.docker.compose.project=smart-tv' --format '{{.ID}} {{.Names}}' | awk -v target="$container" '$2 != target {print $1 ":" $2}' | sort)
-override=$(mktemp /tmp/smart-tv-dashboard-image.XXXXXX.yaml)
-log=$(mktemp /tmp/smart-tv-dashboard-compose.XXXXXX.log)
-cleanup() { rm -f -- "$override" "$log"; }
-trap cleanup EXIT
-write_override() { printf 'services:\n  dashboard:\n    image: "%s"\n' "$1" >"$override"; chmod 600 "$override"; }
 compose_deploy() { compose -f "$dir/compose.yaml" -f "$dir/compose.settings.yaml" -f "$override" "$@"; }
 health_check() {
   local i
@@ -293,7 +296,6 @@ health_check() {
   done
   return 1
 }
-write_override "$new_ref"
 deployment_reason='Compose recreation failed'
 deployment_health='not checked'
 if compose_deploy up -d --no-build --no-deps dashboard >"$log" 2>&1; then
