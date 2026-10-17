@@ -9,7 +9,8 @@ test('HTTPS administrator settings, migration, selection, replacement rollback, 
   // alter a host/browser trust store and does not disable validation for other keys.
   const cert = readFileSync(resolve('../../.local/settings-browser/material/localhost.crt'));
   const pin = createHash('sha256').update(createPublicKey(cert).export({ type: 'spki', format: 'der' })).digest('base64');
-  const adminBrowser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH, args: [`--ignore-certificate-errors-spki-list=${pin}`] });
+  const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+  const adminBrowser = await chromium.launch({ ...(executablePath ? { executablePath } : {}), args: [`--ignore-certificate-errors-spki-list=${pin}`] });
   const context = await adminBrowser.newContext(); const admin = await context.newPage();
   const origin = 'https://localhost:5443';
   const publicOrigin = 'http://127.0.0.1:5082';
