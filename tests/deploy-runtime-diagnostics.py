@@ -14,14 +14,21 @@ END_MARKER = "\n'; then exit 64; fi"
 start = SOURCE.index(START_MARKER) + len(START_MARKER)
 end = SOURCE.index(END_MARKER, start)
 VALIDATOR = SOURCE[start:end]
+PREFLIGHT_VALIDATOR = (ROOT / "scripts/preflight-runtime.py").read_text()
 SECRET = "DO_NOT_PRINT_secret_environment_value"
 PRIVATE_SOURCE = "/private/material/wrapping.key"
-IMAGE_ID = "sha256:06c7183542d8d4ffaf03b992d129e747a37a0850316b32373f6dd53d93f4517e"
+NEW_IMAGE_REF = "smart-tv-dashboard:b29ae0d579c7ca1c0331aaf7e1c4d1653912b639"
+NEW_IMAGE_ID = "sha256:452bd141a0e50af90d1a75f98169b845aa6d1dae9d04de155e23ccc8cc9c9be0"
+CURRENT_IMAGE_ID = "sha256:06c7183542d8d4ffaf03b992d129e747a37a0850316b32373f6dd53d93f4517e"
+
+assert 'normalize_id(image_ids[0]) != normalize_id(inspect.get("Image", ""))' in PREFLIGHT_VALIDATOR
+assert 'compose -f "$override" config --format json' in SOURCE
+assert 'inspect["Image"]' not in VALIDATOR, "post-transfer validation must not compare the old running image ID"
 
 
 def fixtures(case):
     config = {"services": {"dashboard": {
-        "image": "smart-tv-dashboard",
+        "image": NEW_IMAGE_REF,
         "environment": {"ASPNETCORE_URLS": "http://+:8080", "Secret__Token": SECRET},
         "ports": [{"published": "8080", "target": "8080", "host_ip": "10.0.0.11"}],
         "volumes": [
@@ -32,19 +39,16 @@ def fixtures(case):
     }}}
     inspect = {"Config": {"Image": "smart-tv-dashboard", "Env": [
         "ASPNETCORE_URLS=http://+:8080", f"Secret__Token={SECRET}",
-    ]}, "Image": IMAGE_ID, "Mounts": [
+    ]}, "Image": CURRENT_IMAGE_ID, "Mounts": [
         {"Type": "volume", "Name": "smart-tv_settings", "Destination": "/app/state", "RW": False},
         {"Type": "bind", "Name": "", "Source": "/private/material/wrapping.crt", "Destination": "/run/settings-secrets/wrapping.crt", "RW": False},
         {"Type": "bind", "Name": "", "Source": PRIVATE_SOURCE, "Destination": "/run/settings-secrets/wrapping.key", "RW": False},
     ]}
-    image_list = "smart-tv-dashboard"
-    compose_ids = IMAGE_ID
+    image_id = NEW_IMAGE_ID
     if case == "image-reference":
         config["services"]["dashboard"]["image"] = "another-image"
-    elif case == "image-list":
-        image_list = "another-image"
     elif case == "image-id":
-        compose_ids = "sha256:different"
+        image_id = "sha256:different"
     elif case == "environment":
         inspect["Config"]["Env"][1] = f"Secret__Token={SECRET}_changed"
     elif case == "port":
@@ -57,11 +61,11 @@ def fixtures(case):
         inspect["Mounts"][2]["RW"] = True
     elif case == "certificate-identity":
         inspect["Mounts"][2]["Source"] = "/different/private/source.key"
-    return config, inspect, image_list, compose_ids
+    return config, inspect, image_id
 
 
 def run(case="ok"):
-    config, inspect, image_list, compose_ids = fixtures(case)
+    config, inspect, image_id = fixtures(case)
     with tempfile.TemporaryDirectory() as temporary:
         temp = Path(temporary)
         docker = temp / "docker"
@@ -77,14 +81,13 @@ else: sys.exit(2)
         inspect_path = temp / "inspect.json"
         inspect_path.write_text(json.dumps(inspect))
         image_config_path = temp / "image.json"
-        image_config_path.write_text(json.dumps({"Config": {"Env": []}}))
+        image_config_path.write_text(json.dumps({"Id": image_id, "Config": {"Env": []}}))
         env = os.environ | {
             "PATH": f"{temporary}:{os.environ['PATH']}",
             "MOCK_INSPECT": str(inspect_path),
             "MOCK_IMAGE_CONFIG": str(image_config_path),
-            "COMPOSE_IMAGE_LIST": image_list,
-            "COMPOSE_SERVICE_IMAGE_IDS": compose_ids,
-            "NEW_IMAGE_ID": "sha256:new-image",
+            "NEW_IMAGE_REF": NEW_IMAGE_REF,
+            "NEW_IMAGE_ID": NEW_IMAGE_ID,
             "EXPECTED_BIND_ADDRESS": "10.0.0.11",
         }
         return subprocess.run(["python3", "-c", VALIDATOR], input=json.dumps(config),
@@ -94,9 +97,8 @@ else: sys.exit(2)
 good = run()
 assert good.returncode == 0 and not good.stderr, good.stderr
 for case, diagnostic in [
-    ("image-reference", "[image identity]: rendered service reference"),
-    ("image-list", "[image identity]: running reference is absent"),
-    ("image-id", "[image identity]: Compose dashboard image ID differs"),
+    ("image-reference", "[image identity]: effective Compose image reference"),
+    ("image-id", "[image identity]: effective Compose image ID differs"),
     ("environment", "[environment]"),
     ("port", "[port binding]"),
     ("settings-volume", "[settings volume]"),
