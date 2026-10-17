@@ -84,6 +84,7 @@ done
 grep -Fq "expected_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/projects/smart-tv/compose.settings.yaml'" scripts/deploy.sh || {
   echo 'FAIL: production Compose path list is not pinned to the known directory and order' >&2; exit 1;
 }
+python3 tests/preflight-runtime.py
 
 expect_fail 'missing argument' scripts/deploy.sh
 expect_fail 'malformed SHA' scripts/deploy.sh abc
@@ -127,14 +128,15 @@ grep -Fq 'set -Eeuo pipefail' scripts/deploy.sh || { echo 'FAIL: pipeline failur
 grep -Fq 'compose -f "$dir/compose.yaml" -f "$dir/compose.settings.yaml" -f "$override" "$@"' scripts/deploy.sh || { echo 'FAIL: deployment does not use both production Compose files' >&2; exit 1; }
 [[ $(grep -c 'up -d --no-build --no-deps dashboard' scripts/deploy.sh) -eq 2 ]] || { echo 'FAIL: deploy and rollback must both target dashboard only' >&2; exit 1; }
 ! grep -Eq 'docker (image )?rm|docker rmi' scripts/deploy.sh || { echo 'FAIL: script may remove an image before health checks' >&2; exit 1; }
-grep -Fq 'canonical(running) != canonical(expected)' scripts/deploy.sh || { echo 'FAIL: explicit Compose and running image refs are not compared' >&2; exit 1; }
-grep -Fq 'service_image_ids != [inspect["Image"]]' scripts/deploy.sh || { echo 'FAIL: Compose dashboard image is not matched to its running container' >&2; exit 1; }
+grep -Fq 'canonical(running) != canonical(expected)' scripts/preflight-runtime.py || { echo 'FAIL: explicit Compose and running image refs are not compared' >&2; exit 1; }
+grep -Fq 'image_ids != [inspect.get("Image")]' scripts/preflight-runtime.py || { echo 'FAIL: Compose dashboard image is not matched to its running container' >&2; exit 1; }
 grep -Fq 'runtime configuration changed or cannot be validated' scripts/deploy.sh || { echo 'FAIL: runtime configuration is not revalidated before recreation' >&2; exit 1; }
 grep -Fq 'local_platform == "$remote_platform"' scripts/deploy.sh || { echo 'FAIL: local/remote image platform check missing' >&2; exit 1; }
 grep -Fq 'local_revision == "$sha"' scripts/deploy.sh || { echo 'FAIL: source revision image label is not verified' >&2; exit 1; }
 grep -Fq 'revision image tag already exists' scripts/deploy.sh || { echo 'FAIL: existing remote SHA image tag could be overwritten' >&2; exit 1; }
 grep -Fq 'docker info >/dev/null 2>&1 || exit 71' scripts/deploy.sh || { echo 'FAIL: remote Docker verification does not fail closed' >&2; exit 1; }
 grep -Fq 'SMART_TV_IMMICH_ADDRESSES=10.0.0.11' scripts/deploy.sh || { echo 'FAIL: known production interpolation export is not supplied' >&2; exit 1; }
+grep -Fq 'python3 -c "$(printf' scripts/deploy.sh || { echo 'FAIL: read-only preflight does not run the transported diagnostic validator' >&2; exit 1; }
 grep -Fq 'deployment_health=' scripts/deploy.sh || { echo 'FAIL: deployment health outcome is not tracked' >&2; exit 1; }
 grep -Fq 'docker inspect --format '\''{{.Image}}'\'' "$container") == "$old_id"' scripts/deploy.sh || { echo 'FAIL: rollback does not verify restoration of the previous image' >&2; exit 1; }
 grep -Fq 'docker tag "$old_id" "$rollback_ref"' scripts/deploy.sh || { echo 'FAIL: rollback does not retain the previous image under a separate tag' >&2; exit 1; }

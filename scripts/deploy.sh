@@ -75,10 +75,12 @@ fi
 remote_preflight() {
 # This check is read-only. Compose receives the known, previously exported
 # non-secret setting. Its resolved configuration must match the live dashboard.
-remote_preflight=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$EXPECTED_CONTAINER" "$REMOTE_DIR" <<'REMOTE_PREFLIGHT'
+validator_b64=$(base64 <"$script_dir/preflight-runtime.py" | tr -d '\n')
+remote_preflight=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$EXPECTED_CONTAINER" "$REMOTE_DIR" "$validator_b64" <<'REMOTE_PREFLIGHT'
 set -Eeuo pipefail
 expected_container=$1
 expected_dir='/home/lazyboy/projects/smart-tv'
+validator_b64=$3
 [[ $2 == "$expected_dir" ]] || exit 40
 host_ips=$(hostname -I 2>/dev/null) || { echo 'preflight: cannot identify SSH host' >&2; exit 41; }
 host_matches=false
@@ -112,51 +114,13 @@ expected_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/proje
 platform=$(docker info --format '{{.OSType}}/{{.Architecture}}' 2>/dev/null) || { echo 'preflight: cannot inspect remote Docker platform' >&2; exit 57; }
 [[ $platform == */* ]] || { echo 'preflight: invalid remote Docker platform' >&2; exit 58; }
 # Validate resolved runtime configuration against the currently running service
-# in memory. Compose's expanded configuration (which contains secrets) is never
-# written to a file or emitted to logs.
+# in memory. The validator reports mismatch categories and non-secret metadata;
+# Compose's expanded configuration is never written to a file or emitted.
 images=$(compose config --images 2>/dev/null) || { echo 'preflight: cannot resolve Compose image references' >&2; exit 49; }
 service_image_ids=$(compose images -q dashboard 2>/dev/null) || { echo 'preflight: cannot resolve the dashboard Compose image' >&2; exit 49; }
-image_repo=$(compose config --format json 2>/dev/null | COMPOSE_IMAGE_LIST="$images" COMPOSE_SERVICE_IMAGE_IDS="$service_image_ids" python3 -c '
-import json, os, re, subprocess, sys
-try:
-    config = json.load(sys.stdin)
-    service = config["services"]["dashboard"]
-    inspect = json.loads(subprocess.check_output(["docker", "inspect", "smart-tv-dashboard-1"], text=True))[0]
-    expected = service.get("image")
-    running = inspect["Config"].get("Image")
-    image_list = os.environ["COMPOSE_IMAGE_LIST"].splitlines()
-    service_image_ids = os.environ["COMPOSE_SERVICE_IMAGE_IDS"].splitlines()
-    canonical = lambda name: name if "@" in name or ":" in name.rsplit("/", 1)[-1] else name + ":latest"
-    if not running: raise ValueError()
-    if expected and canonical(running) != canonical(expected): raise ValueError()
-    if canonical(running) not in {canonical(name) for name in image_list}: raise ValueError()
-    if service_image_ids != [inspect["Image"]]: raise ValueError()
-    image_repo = running.split("@", 1)[0]
-    if ":" in image_repo.rsplit("/", 1)[-1]: image_repo = image_repo.rsplit(":", 1)[0]
-    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]*", image_repo): raise ValueError()
-    desired_env = {str(k): str(v) for k, v in service.get("environment", {}).items()}
-    current_env = dict(item.split("=", 1) for item in inspect["Config"].get("Env", []) if "=" in item)
-    image_config = json.loads(subprocess.check_output(["docker", "image", "inspect", inspect["Image"]], text=True))[0]
-    expected_env = dict(item.split("=", 1) for item in image_config["Config"].get("Env", []) if "=" in item)
-    expected_env.update(desired_env)
-    if current_env != expected_env: raise ValueError()
-    ports = service.get("ports", [])
-    if not any(str(p.get("published")) == "8080" and str(p.get("target")) == "8080" and p.get("host_ip") == "10.0.0.11" for p in ports): raise ValueError()
-    mounts = inspect.get("Mounts", [])
-    if not any(m.get("Name") == "smart-tv_settings" and m.get("Destination") == "/app/state" and not m.get("RW") for m in mounts): raise ValueError()
-    wanted = {"/run/settings-secrets/wrapping.crt", "/run/settings-secrets/wrapping.key"}
-    desired_mounts = {m.get("target"): m for m in service.get("volumes", [])}
-    current_mounts = {m.get("Destination"): m for m in mounts}
-    for target in wanted:
-        desired = desired_mounts[target]
-        current = current_mounts[target]
-        if desired.get("type") != "bind" or not desired.get("read_only") or current.get("Source") != desired.get("source") or current.get("RW"):
-            raise ValueError()
-except Exception:
-    print("preflight: resolved Compose image/runtime configuration cannot be proven to match the running dashboard", file=sys.stderr)
-    sys.exit(1)
-print(image_repo)
-') || { echo 'preflight: resolved Compose image/runtime configuration cannot be proven to match the running dashboard' >&2; exit 59; }
+image_repo=$(compose config --format json 2>/dev/null | COMPOSE_IMAGE_LIST="$images" COMPOSE_SERVICE_IMAGE_IDS="$service_image_ids" python3 -c "$(printf '%s' "$validator_b64" | base64 -d)") || {
+  echo 'preflight: resolved Compose image/runtime configuration cannot be proven to match the running dashboard' >&2; exit 59;
+}
 printf 'PREFLIGHT_OK\t%s\t%s\n' "$platform" "$image_repo"
 REMOTE_PREFLIGHT
 ) || die 'remote read-only preflight failed; no production changes were made'
