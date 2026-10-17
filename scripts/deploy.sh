@@ -4,6 +4,7 @@ set -Eeuo pipefail
 readonly REMOTE_HOST='lazyboy@10.0.0.11'
 readonly REMOTE_DIR='/home/lazyboy/projects/smart-tv'
 readonly EXPECTED_CONTAINER='smart-tv-dashboard-1'
+readonly EXPECTED_BIND_ADDRESS='10.0.0.11'
 readonly HEALTH_URL='http://10.0.0.11:8080/api/health'
 readonly HEALTH_ATTEMPTS=30
 
@@ -60,9 +61,10 @@ if [[ -n $(git status --porcelain=v1 --untracked-files=all 2>/dev/null) ]]; then
 fi
 
 for required in Dockerfile .dockerignore compose.yaml compose.settings.yaml \
-  scripts/test-api.sh scripts/build-test-host.sh scripts/test-browser.sh; do
+  scripts/validate-production-bind.sh scripts/test-api.sh scripts/build-test-host.sh scripts/test-browser.sh; do
   [[ -f $required ]] || die "required repository file is missing: $required"
 done
+production_bind_address=$(bash "$script_dir/validate-production-bind.sh" "$EXPECTED_BIND_ADDRESS") || die 'production bind address could not be established safely'
 
 if $dry_run; then
   printf 'Dry run: local revision %s matches clean HEAD.\n' "$sha"
@@ -76,11 +78,13 @@ remote_preflight() {
 # This check is read-only. Compose receives the known, previously exported
 # non-secret setting. Its resolved configuration must match the live dashboard.
 validator_b64=$(base64 <"$script_dir/preflight-runtime.py" | tr -d '\n')
-remote_preflight=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$EXPECTED_CONTAINER" "$REMOTE_DIR" "$validator_b64" <<'REMOTE_PREFLIGHT'
+remote_preflight=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$EXPECTED_CONTAINER" "$REMOTE_DIR" "$production_bind_address" "$validator_b64" <<'REMOTE_PREFLIGHT'
 set -Eeuo pipefail
 expected_container=$1
 expected_dir='/home/lazyboy/projects/smart-tv'
-validator_b64=$3
+bind_address=$3
+validator_b64=$4
+[[ $bind_address == 10.0.0.11 ]] || { echo 'preflight: production bind address is missing or unexpected' >&2; exit 40; }
 [[ $2 == "$expected_dir" ]] || exit 40
 host_ips=$(hostname -I 2>/dev/null) || { echo 'preflight: cannot identify SSH host' >&2; exit 41; }
 host_matches=false
@@ -92,7 +96,7 @@ for f in compose.yaml compose.settings.yaml; do
   [[ -f $f ]] || { echo 'preflight: required Compose file missing' >&2; exit 43; }
 done
 compose() {
-  env -i PATH="$PATH" HOME="$HOME" SMART_TV_IMMICH_ADDRESSES=10.0.0.11 docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
+  env -i PATH="$PATH" HOME="$HOME" SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND="$bind_address" docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
 }
 if ! compose config --quiet >/dev/null 2>&1; then
   echo 'preflight: Compose interpolation or configuration validation failed' >&2; exit 48
@@ -118,7 +122,7 @@ platform=$(docker info --format '{{.OSType}}/{{.Architecture}}' 2>/dev/null) || 
 # Compose's expanded configuration is never written to a file or emitted.
 images=$(compose config --images 2>/dev/null) || { echo 'preflight: cannot resolve Compose image references' >&2; exit 49; }
 service_image_ids=$(compose images -q dashboard 2>/dev/null) || { echo 'preflight: cannot resolve the dashboard Compose image' >&2; exit 49; }
-image_repo=$(compose config --format json 2>/dev/null | COMPOSE_IMAGE_LIST="$images" COMPOSE_SERVICE_IMAGE_IDS="$service_image_ids" python3 -c "$(printf '%s' "$validator_b64" | base64 -d)") || {
+image_repo=$(compose config --format json 2>/dev/null | COMPOSE_IMAGE_LIST="$images" COMPOSE_SERVICE_IMAGE_IDS="$service_image_ids" EXPECTED_BIND_ADDRESS="$bind_address" python3 -c "$(printf '%s' "$validator_b64" | base64 -d)") || {
   echo 'preflight: resolved Compose image/runtime configuration cannot be proven to match the running dashboard' >&2; exit 59;
 }
 printf 'PREFLIGHT_OK\t%s\t%s\n' "$platform" "$image_repo"
@@ -177,17 +181,19 @@ fi
 # Deployment and rollback run remotely. The temporary Compose override lives in
 # /tmp, not the checkout, and lets Compose use the immutable SHA tag without
 # replacing the previous Compose image tag.
-if ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$sha" "$image_repo" "$EXPECTED_CONTAINER" "$HEALTH_URL" "$HEALTH_ATTEMPTS" <<'REMOTE_DEPLOY'
+if ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$sha" "$image_repo" "$EXPECTED_CONTAINER" "$HEALTH_URL" "$HEALTH_ATTEMPTS" "$production_bind_address" <<'REMOTE_DEPLOY'
 set -Eeuo pipefail
 sha=$1
 image=$2
 container=$3
 health_url=$4
 attempts=$5
+bind_address=$6
 dir='/home/lazyboy/projects/smart-tv'
+[[ $bind_address == 10.0.0.11 ]] || { echo 'deploy: production bind address is missing or unexpected' >&2; exit 60; }
 cd -- "$dir"
 compose() {
-  env -i PATH="$PATH" HOME="$HOME" SMART_TV_IMMICH_ADDRESSES=10.0.0.11 docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
+  env -i PATH="$PATH" HOME="$HOME" SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND="$bind_address" docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
 }
 # Repeat critical read-only checks after transfer, before changing service state.
 host_ips=$(hostname -I 2>/dev/null) || { echo 'deploy: cannot identify SSH host' >&2; exit 60; }
@@ -206,7 +212,7 @@ new_ref="$image:$sha"
 new_id=$(docker image inspect --format '{{.Id}}' "$new_ref") || { echo 'deploy: transferred image is unavailable' >&2; exit 64; }
 images=$(compose config --images 2>/dev/null) || { echo 'deploy: cannot revalidate Compose images' >&2; exit 64; }
 service_image_ids=$(compose images -q dashboard 2>/dev/null) || { echo 'deploy: cannot revalidate dashboard image' >&2; exit 64; }
-if ! compose config --format json 2>/dev/null | COMPOSE_IMAGE_LIST="$images" COMPOSE_SERVICE_IMAGE_IDS="$service_image_ids" NEW_IMAGE_ID="$new_id" python3 -c '
+if ! compose config --format json 2>/dev/null | COMPOSE_IMAGE_LIST="$images" COMPOSE_SERVICE_IMAGE_IDS="$service_image_ids" NEW_IMAGE_ID="$new_id" EXPECTED_BIND_ADDRESS="$bind_address" python3 -c '
 import json, os, sys
 try:
     config=json.load(sys.stdin); service=config["services"]["dashboard"]
@@ -221,7 +227,7 @@ try:
     image_config=json.loads(__import__("subprocess").check_output(["docker","image","inspect",os.environ["NEW_IMAGE_ID"]],text=True))[0]
     expected=dict(item.split("=",1) for item in image_config["Config"].get("Env",[]) if "=" in item); expected.update(desired)
     if current!=expected: raise ValueError()
-    if not any(str(p.get("published"))=="8080" and str(p.get("target"))=="8080" and p.get("host_ip")=="10.0.0.11" for p in service.get("ports",[])): raise ValueError()
+    if not any(str(p.get("published"))=="8080" and str(p.get("target"))=="8080" and p.get("host_ip")==os.environ["EXPECTED_BIND_ADDRESS"] for p in service.get("ports",[])): raise ValueError()
     mounts=inspect.get("Mounts",[])
     if not any(m.get("Name")=="smart-tv_settings" and m.get("Destination")=="/app/state" and not m.get("RW") for m in mounts): raise ValueError()
     wanted={"/run/settings-secrets/wrapping.crt","/run/settings-secrets/wrapping.key"}

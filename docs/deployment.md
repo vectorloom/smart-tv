@@ -17,10 +17,13 @@ local checkout to be clean and the requested 40-character revision to equal
   password or accept a new host key automatically.
 - Production must have Docker Compose, `curl`, `python3`, and the standard shell
   utilities used by the script. The script supplies the known non-secret
-  `SMART_TV_IMMICH_ADDRESSES=10.0.0.11` value that production previously received
-  as a shell export. Other Compose interpolation must resolve in Compose's
-  existing project context. The script does not assume `.env`, pass an
-  `--env-file`, or use the protected backup as configuration.
+  `SMART_TV_IMMICH_ADDRESSES=10.0.0.11` and validated
+  `SMART_TV_BIND=10.0.0.11` values directly to each isolated Compose invocation.
+  The bind address is checked against the approved production address before
+  preflight and again remotely before deployment. Other Compose interpolation
+  must resolve from Compose's project `.env` context or its declared defaults;
+  interactive shell exports are intentionally not inherited. The script does
+  not pass an `--env-file` or use the protected backup as configuration.
 - The dashboard must be running as `smart-tv-dashboard-1` under project
   `smart-tv`, with the expected Compose file labels, published address, protected
   runtime configuration, `smart-tv_settings` mount, and read-only certificate
@@ -40,12 +43,11 @@ running dashboard, the script stops before transferring the image. It also
 refuses to overwrite an existing remote image tag for the requested SHA. Do not
 loosen these checks by copying the protected backup into the checkout.
 
-The known address export is the only shell-exported interpolation value
-currently established by the available evidence. If production relies on other
-values exported only in an interactive shell, the isolated SSH command will not
-inherit them and preflight will stop when its rendered configuration differs
-from the running dashboard. Read-only verification must establish the source
-for those values before changing the script.
+The previous deployment wrapper cleared the remote environment and supplied
+only `SMART_TV_IMMICH_ADDRESSES`; this caused `SMART_TV_BIND` to fall back to
+Compose's `127.0.0.1` default even though the running dashboard is intended to
+bind `10.0.0.11`. The deployment wrapper now supplies the approved bind address
+consistently for preflight, recreation, and rollback.
 
 ## Safe use
 
