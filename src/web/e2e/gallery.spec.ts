@@ -23,6 +23,7 @@ test('TV remote navigation, photo frame presentation, and focus restoration', as
   await expect(page.getByRole('button', { name: /Everyday favorites/ })).toHaveCSS('box-shadow', 'rgb(242, 163, 58) 0px 0px 0px 4px');
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/photos\/album$/);
   await expect(page.getByRole('button', { name: 'Play album' })).toBeEnabled();
   await page.getByRole('button', { name: 'Open Mountain morning' }).focus();
   await page.keyboard.press('Enter');
@@ -63,10 +64,7 @@ test('frame presentation and Backspace exit work when fullscreen is denied', asy
   await page.addInitScript(() => {
     document.documentElement.requestFullscreen = () => Promise.reject(new Error('Fullscreen denied'));
   });
-  await page.goto('/');
-  await expect(page.getByRole('button', { name: 'All albums (2)' })).toBeVisible();
-  await page.keyboard.press('ArrowRight'); // reveals the album row
-  await page.getByRole('button', { name: /Weekend wanderings/ }).click();
+  await page.goto('/photos/album');
   const play = page.getByRole('button', { name: 'Play album' });
   await play.click();
   await expect(page.getByRole('dialog')).toBeFocused();
@@ -81,10 +79,7 @@ test('frame presentation and Backspace exit work when fullscreen is denied', asy
 
 test('Select reveals reusable TV controls, interval editing survives timeout, and hiding restores focus', async ({ page }) => {
   await page.clock.install();
-  await page.goto('/');
-  await expect(page.getByRole('button', { name: 'All albums (2)' })).toBeVisible();
-  await page.keyboard.press('ArrowRight'); // reveals the album row
-  await page.getByRole('button', { name: /Weekend wanderings/ }).click();
+  await page.goto('/photos/album');
   await page.getByRole('button', { name: 'Play album' }).click();
   const dialog = page.getByRole('dialog');
   const overlay = page.locator('.slide-bottom');

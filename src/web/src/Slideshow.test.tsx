@@ -12,6 +12,23 @@ function setup(initialId = 'one', reveal = false) {
 }
 
 describe('slideshow controls', () => {
+  it('closes when its own fullscreen ends, but ignores a late exit from the previous viewer', () => {
+    let element: Element | null = null;
+    // jsdom has no Fullscreen API; define the property for this test only.
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, get: () => element });
+    try {
+      const { onExit } = setup();
+      // The previous viewer's exitFullscreen() completes after this one opened: not ours, stay open.
+      act(() => { document.dispatchEvent(new Event('fullscreenchange')); });
+      expect(onExit).not.toHaveBeenCalled();
+      element = document.documentElement;
+      act(() => { document.dispatchEvent(new Event('fullscreenchange')); });
+      element = null;
+      act(() => { document.dispatchEvent(new Event('fullscreenchange')); });
+      expect(onExit).toHaveBeenCalledTimes(1);
+    } finally { delete (document as { fullscreenElement?: unknown }).fullscreenElement; }
+  });
+
   it('opens the selected photo and wraps with arrow keys', () => {
     const { dialog } = setup('three');
     expect(screen.getByRole('img', { hidden: true })).toHaveAttribute('alt', 'Three');

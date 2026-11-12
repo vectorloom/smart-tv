@@ -134,7 +134,8 @@ Open `http://127.0.0.1:5173`. Vite proxies HTTP and WebSocket `/api` requests to
 
 | Context | Controls |
 | --- | --- |
-| Album/photo grid | Arrow keys move focus spatially; Enter or Space activates a button; Escape/Backspace returns to albums; Home returns to the album gallery |
+| Any screen | Arrow keys move focus spatially; Enter or Space activates; Escape, Backspace or the browser/remote Back button goes back through history (on a deep link, one level up); Home goes to the home screen |
+| Navigation rail | Left from the leftmost item on a screen enters the rail; Up/Down moves; Right returns to the screen where you left it; Enter opens the screen |
 | Slideshow stage | Left/Right changes photo; Enter or Space toggles playback; Up/Down moves focus to controls |
 | Slideshow controls | Arrows move focus; Enter activates; Space toggles playback; the interval selector keeps native keyboard behavior (Tab/Shift+Tab leaves it) |
 | Slideshow (outside inputs) | Escape/Backspace exits; Home returns to albums; Tab/Shift+Tab cycle only within the slideshow |
@@ -146,9 +147,23 @@ A mouse works the same way: clicking a button is the same as Enter, and moving t
 The browser Fullscreen API is requested directly from the activation gesture. If unsupported or denied, a viewport-filling overlay remains usable. Escape or the Exit button closes the slideshow and restores focus to the launching control. Actual TV browser compatibility should be checked on the target device, including its fullscreen and remote-key behavior.
 
 
-## Home screen
+## Screens
 
-The home screen never scrolls. A random photo from the selected albums fills the left side and crossfades every 30 seconds. Albums are weighted by the square root of their size, so a 1,000-photo album appears about 3× as often as a 100-photo album. The next photo is decoded in the browser before the change, and the server prefetches the one after it. When idle, only an **All albums (N)** button sits on the photo; it opens the album list. The first key press (or mouse movement) shows, for up to eight albums, a single row of album buttons above the caption; it hides again after 30 seconds without input or on Back. The right rail shows the clock, current weather, a 12-hour temperature chart, a 5-day forecast, and the pairing control. Nothing is focused until the first key press.
+| Route | Screen |
+| --- | --- |
+| `/` | Home: photo slideshow, clock and weather |
+| `/photos` | Photos: one horizontal row per album (first 12 photos and **See all**) |
+| `/photos/:albumId` | Album: every photo, **Play album**; `?photo=<id>` opens the full-screen viewer |
+| `/weather` | Current conditions, next 12 hours, 7 days and the regional wind map |
+| `/home-automation` | Placeholder until Home Assistant is connected |
+| `/calendar` | Placeholder until a calendar is connected |
+| `/preferences` | Settings (rail label): phone pairing and display details |
+
+A navigation rail on the left links the screens. On home it is hidden and slides in, expanded, on the first key press, then hides after 30 seconds without input. With a mouse it opens when the pointer reaches the left edge and closes about 1.5 seconds after the pointer leaves it (or leaves the window); moving the mouse over the photo only shows the album buttons. Choosing an item closes it. On other screens it stays collapsed to 112 px icons and expands while it has focus. The viewer is a URL, so Back, Escape and the browser's back button all close it and return focus to the photo that opened it; focus is remembered per history entry and restored on Back.
+
+### Home screen
+
+The home screen never scrolls. A random photo from the selected albums fills the left side and crossfades every 30 seconds. Albums are weighted by the square root of their size, so a 1,000-photo album appears about 3× as often as a 100-photo album. The next photo is decoded in the browser before the change, and the server prefetches the one after it. When idle, only an **All albums (N)** button sits on the photo. The first key press (or mouse movement) shows the rail and, for up to eight albums, a single row of album buttons above the caption; both hide again after 30 seconds without input. The right rail shows the clock, current weather, a 12-hour temperature chart and a 5-day forecast. Nothing is focused until the first key press.
 
 | Endpoint | Purpose |
 | --- | --- |
@@ -156,7 +171,7 @@ The home screen never scrolls. A random photo from the selected albums fills the
 
 ## Phone remote and pairing (Milestone 2)
 
-1. Open the dashboard at `/` and select **Pair phone** (bottom of the right-hand rail) using arrows and Enter. The TV displays an eight-digit code for two minutes. **New pairing code** invalidates the previous code.
+1. On the TV, open **Settings** in the navigation rail (`/preferences`) and select **Pair phone**. The TV displays an eight-digit code for two minutes. **New pairing code** invalidates the previous code.
 2. Open `/remote` on the same application origin in a second tab or browser context; enter the code and choose **Pair with TV**. For local development use `http://127.0.0.1:5173/remote`. A second tab simulates the phone without LAN access.
 3. Use the D-pad and Select to navigate. Back leaves the slideshow or album; Home returns to albums. Play/Pause starts the open album or toggles playback; Next/Previous change slideshow photos even during image loading. In slideshow controls, arrows move focus; on the interval selector, the phone's Up/Down changes its value and Left/Right leaves it.
 4. Either screen can **Unpair phone**. The TV can issue another code to replace its paired phone. Pairing a new phone revokes the previous phone immediately.
@@ -191,7 +206,7 @@ The Compose default remains **127.0.0.1:8080**. A real phone cannot reach the ho
 
 Only use a trusted private network. Plain HTTP/WS provides no transport confidentiality: a network observer could capture photos, codes, and credentials and take over a session. Prefer a separately reviewed HTTPS/WSS setup with trusted certificates before enabling LAN access; any future reverse proxy must preserve the intended host/scheme for Origin validation and support WebSocket upgrades. Pairing is not gallery authentication, and LAN access exposes selected photos to reachable clients. Public internet exposure is unsupported.
 
-TV screens are laid out on a fixed 1920×1080 canvas that is scaled uniformly to the browser's viewport (Android TV browsers often report 1280×720 or 960×540), with persistent amber focus rings for keyboard and phone actions. Geometry-based arrow navigation is deterministic for the rendered grid, keeps focus at boundaries, and excludes disabled controls. Enter/Space activates gallery buttons; inputs and editable fields retain native keyboard handling. Returning from a slideshow restores its launching control; returning from an album restores the selected album. Loading, retry, and empty views retain an available navigation or pairing control. The stage scale is recomputed on every viewport change (resize, fullscreen, zoom), and non-16:9 windows are letterboxed in the background colour.
+TV screens are laid out on a fixed 1920×1080 canvas that is scaled uniformly to the browser's viewport (Android TV browsers often report 1280×720 or 960×540), with persistent amber focus rings for keyboard and phone actions. Geometry-based arrow navigation is deterministic for the rendered grid, keeps focus at boundaries, and excludes disabled controls. Enter/Space activates gallery buttons; inputs and editable fields retain native keyboard handling. Returning from the viewer restores its launching photo; returning from an album restores the button that opened it. Loading, retry, and empty views retain an available navigation control. The stage scale is recomputed on every viewport change (resize, fullscreen, zoom), and non-16:9 windows are letterboxed in the background colour.
 
 ## Testing and builds
 
@@ -248,7 +263,7 @@ scripts/deploy.sh <full-commit-sha>
 
 ```text
 src/api/                  ASP.NET routes, validated configuration, Immich adapter
-src/web/src/              React home screen, album gallery, slideshow, styles, unit tests
+src/web/src/              React TV shell (routes, rail, focus zones), screens, viewer, styles, unit tests
 src/web/e2e/              Browser tests using synthetic photos
 tests/api/                Adapter unit tests
 Dockerfile                Multi-stage frontend/backend build

@@ -252,7 +252,7 @@ test('mouse and keyboard work like the remote on a PC', async ({ page }) => {
   await expect(page.locator('.stage button:focus')).toHaveCount(1);
 });
 
-test('more than eight albums: the first key focuses All albums, which opens the full list', async ({ page }) => {
+test('more than eight albums: the first key focuses All albums, which opens the Photos screen', async ({ page }) => {
   await mockApi(page, albumList(9));
   await page.goto('/');
   const all = page.getByRole('button', { name: 'All albums (9)' });
@@ -261,8 +261,8 @@ test('more than eight albums: the first key focuses All albums, which opens the 
   await expect(all).toBeFocused();
   await expect(page.locator('.album-row')).toHaveCount(0);
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('heading', { name: 'All albums', exact: true })).toBeVisible();
-  await expect(page.locator('.album-card')).toHaveCount(9);
+  await expect(page.getByRole('heading', { level: 1, name: 'Photos' })).toBeVisible();
+  await expect(page.locator('.photo-row')).toHaveCount(9);
   await page.keyboard.press('Backspace');
   await expect(all).toBeFocused();
 });

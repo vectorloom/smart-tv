@@ -37,6 +37,8 @@
   --radius-tile-small: 16px;
   --screen-padding: 48px;
   --target-min: 48px;
+  --rail-collapsed: 112px;
+  --rail-expanded: 340px;
 
   /* Focus: the only cue on a TV */
   --focus-ring: 0 0 0 4px var(--accent);
@@ -141,10 +143,7 @@ html.tv, html.tv body { height: 100%; overflow: hidden; background: var(--bg); }
 .stage .pill-small { min-height: var(--target-min); padding: 0 16px; font-size: 16px; background-color: var(--surface); border-color: transparent; }
 .stage .pill-small .icon { width: 20px; height: 20px; }
 
-/* ---- Legacy screens inside the stage (replaced by the Photos screen in Stage 2) ---- */
-.legacy { height: 100%; overflow-y: auto; padding: var(--screen-padding) 64px; }
-.legacy .heading-row h1 { font-family: var(--font); font-size: 56px; font-weight: 600; letter-spacing: -.01em; }
-.legacy .album-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; }
+/* ---- Full-screen viewer ---- */
 .stage .slide-top, .stage .slide-bottom { padding-inline: 76px; }
 
 @media (prefers-reduced-motion: reduce) {

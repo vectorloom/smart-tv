@@ -12,11 +12,12 @@ export function shuffled<T>(items: readonly T[], random = Math.random): T[] {
 }
 
 // Geometry-based focus navigation adapts to the actual number of TV grid columns.
-export function moveFocus(root: HTMLElement, key: string): void {
+// Returns whether focus moved, so callers can hand an edge press to another zone.
+export function moveFocus(root: HTMLElement, key: string): boolean {
   const elements = [...root.querySelectorAll<HTMLElement>('button:not(:disabled), select, [tabindex="0"]')]
     .filter(element => element.getBoundingClientRect().width > 0);
   const current = document.activeElement as HTMLElement;
-  if (!elements.includes(current)) { elements[0]?.focus(); return; }
+  if (!elements.includes(current)) { elements[0]?.focus(); return elements.length > 0; }
   const origin = current.getBoundingClientRect();
   const x = origin.left + origin.width / 2;
   const y = origin.top + origin.height / 2;
@@ -31,6 +32,7 @@ export function moveFocus(root: HTMLElement, key: string): void {
     return { element, forward, score: forward + cross * 3 };
   }).filter(candidate => candidate.forward > 4).sort((a, b) => a.score - b.score);
   candidates[0]?.element.focus();
+  return candidates.length > 0;
 }
 
 export function isEditing(target: EventTarget | null): boolean {

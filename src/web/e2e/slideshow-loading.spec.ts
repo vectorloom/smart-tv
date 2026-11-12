@@ -31,10 +31,7 @@ async function gallery(page: Page, mode: 'missed-load' | 'slow') {
     return route.fulfill({ json: [{ id: 'album', name: 'Five photos', assetCount: 5 }] });
   });
   await page.clock.install();
-  await page.goto('/');
-  await expect(page.getByRole('button', { name: 'All albums (1)' })).toBeVisible();
-  await page.keyboard.press('ArrowRight'); // reveals the album row
-  await page.getByRole('button', { name: /Five photos/ }).click();
+  await page.goto('/photos/album');
   await page.getByRole('button', { name: 'Play album' }).click();
   return { errors, release: () => release!() };
 }
