@@ -42,7 +42,7 @@ test('two browser contexts pair, route commands to one tab, reconnect both ends 
     await expect(phone.getByRole('status')).toHaveText('Connected');
     await expect(page.locator('.pair-code')).toHaveCount(0);
     expect(await phone.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-    await expect(page.getByRole('button', { name: 'Unpair phone' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Unpair this TV' })).toBeVisible();
     // The phone's Home button takes the TV home; its first arrow reveals the album row.
     await phone.getByRole('button', { name: 'Home', exact: true }).click();
     await expect(page.locator('.home')).toBeVisible();
@@ -114,7 +114,10 @@ test('two browser contexts pair, route commands to one tab, reconnect both ends 
     await expect(page.getByRole('button', { name: /Album A/ })).toBeFocused();
     await page.goto('/preferences');
     await expect(phone.getByRole('status')).toHaveText('Connected');
-    await page.getByRole('button', { name: 'Unpair phone' }).click();
+    // "Unpair this TV" needs a second press; it ends the TV's session and revokes the phone.
+    await page.getByRole('button', { name: 'Unpair this TV' }).click();
+    await expect(phone.getByRole('status')).toHaveText('Connected');
+    await page.getByRole('button', { name: 'Press again to unpair' }).click();
     await expect(phone.getByLabel('Pairing code from your TV')).toBeVisible();
     await expect(phone.getByRole('button', { name: 'Next', exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Pair phone', exact: true }).click();
@@ -123,7 +126,7 @@ test('two browser contexts pair, route commands to one tab, reconnect both ends 
     await expect(phone.getByRole('status')).toHaveText('Connected');
     await phone.getByRole('button', { name: 'Unpair phone' }).click();
     await expect(phone.getByLabel('Pairing code from your TV')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Unpair phone' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Unpair this TV' })).toHaveCount(0);
   } finally { await phoneContext.close(); await other.close(); }
 });
 

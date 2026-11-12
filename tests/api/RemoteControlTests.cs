@@ -152,6 +152,99 @@ public class RemoteControlTests
         Assert.True(Last(phone, "ready").GetProperty("connected").GetBoolean());
     }
     [Fact]
+    public void PairedSessionsSurviveRestartAndTheFileHoldsOnlyHashes()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"remote-{Guid.NewGuid():N}.json");
+        try
+        {
+            string tvToken, phoneToken;
+            using (var service = new RemoteControl(clock, file, null))
+            {
+                var a = Register(service); tvToken = a.Token;
+                var phone = new RemotePeer("phone");
+                Send(service, phone, new { type = "pair", code = a.Code });
+                phoneToken = Last(phone, "ready").GetProperty("credential").GetString()!;
+                // An unpaired TV session is not persisted.
+                Register(service, "tv2");
+            }
+            var json = File.ReadAllText(file);
+            Assert.DoesNotContain(tvToken, json);
+            Assert.DoesNotContain(phoneToken, json);
+            using var stored = JsonDocument.Parse(json);
+            Assert.Single(stored.RootElement.GetProperty("sessions").EnumerateArray());
+            if (!OperatingSystem.IsWindows()) Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(file));
+
+            // A restart (or redeploy) a day later: both ends resume and commands flow again.
+            clock.Now = clock.Now.AddDays(1);
+            using (var restarted = new RemoteControl(clock, file, null))
+            {
+                var tv = new RemotePeer("tv"); Send(restarted, tv, new { type = "resume", credential = tvToken });
+                Assert.Equal(tvToken, Last(tv, "ready").GetProperty("credential").GetString());
+                var phone = new RemotePeer("phone"); Send(restarted, phone, new { type = "resume", credential = phoneToken });
+                Last(phone, "ready");
+                Read(tv); Send(restarted, phone, new { type = "command", command = "Select" });
+                Assert.Equal("Select", Last(tv, "command").GetProperty("command").GetString());
+            }
+            // The expiry slid to 30 days after that reconnect; 31 idle days later the session is gone.
+            clock.Now = clock.Now.AddDays(29);
+            using (var later = new RemoteControl(clock, file, null))
+            { var tv = new RemotePeer("tv"); Send(later, tv, new { type = "resume", credential = tvToken }); Last(tv, "ready"); }
+            clock.Now = clock.Now.AddDays(31);
+            using (var expired = new RemoteControl(clock, file, null))
+            { var tv = new RemotePeer("tv"); Send(expired, tv, new { type = "resume", credential = tvToken }); Last(tv, "denied"); }
+        }
+        finally { File.Delete(file); }
+    }
+    [Fact]
+    public void UnpairAndForgetRemoveTheStoredSession()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"remote-{Guid.NewGuid():N}.json");
+        try
+        {
+            using var service = new RemoteControl(clock, file, null);
+            var a = Register(service); var phone = new RemotePeer("phone");
+            Send(service, phone, new { type = "pair", code = a.Code }); Last(phone, "ready");
+            Send(service, a.Tv, new { type = "unpair" }); Last(phone, "revoked");
+            Assert.Empty(JsonDocument.Parse(File.ReadAllText(file)).RootElement.GetProperty("sessions").EnumerateArray());
+
+            // "Unpair this TV" ends the TV session itself; its old credential no longer resumes.
+            var b = Register(service, "tv2"); var phone2 = new RemotePeer("phone2");
+            Send(service, phone2, new { type = "pair", code = b.Code }); Last(phone2, "ready");
+            Send(service, b.Tv, new { type = "forget" });
+            Last(b.Tv, "forgotten"); Last(phone2, "revoked");
+            Assert.Empty(JsonDocument.Parse(File.ReadAllText(file)).RootElement.GetProperty("sessions").EnumerateArray());
+            var again = new RemotePeer("tv2"); Send(service, again, new { type = "resume", credential = b.Token }); Last(again, "denied");
+            // The same socket may register a fresh session.
+            Send(service, b.Tv, new { type = "register" }); Last(b.Tv, "ready");
+        }
+        finally { File.Delete(file); }
+    }
+    [Fact]
+    public void UnreadableSessionFileStartsEmpty()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"remote-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(file, "{ not json");
+            using var service = new RemoteControl(clock, file, null);
+            var tv = new RemotePeer("tv"); Send(service, tv, new { type = "resume", credential = new string('A', 64) }); Last(tv, "denied");
+            Register(service);
+        }
+        finally { File.Delete(file); }
+    }
+    [Fact]
+    public void UserAgentIsLoggedSafely()
+    {
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        Assert.Equal("(none)", RemoteControl.UserAgent(context));
+        context.Request.Headers.UserAgent = "Mozilla/5.0 (Linux; Android 12; BRAVIA 4K) Chrome/120\r\nFAKE log line";
+        Assert.Equal("Mozilla/5.0 (Linux; Android 12; BRAVIA 4K) Chrome/120??FAKE log line", RemoteControl.UserAgent(context));
+        context.Request.Headers.UserAgent = "Agent\u0007" + new string('x', 400);
+        var cleaned = RemoteControl.UserAgent(context);
+        Assert.StartsWith("Agent?", cleaned);
+        Assert.Equal(257, cleaned.Length);
+    }
+    [Fact]
     public void MalformedMessagesAndFloodingAreBounded()
     {
         using var service = new RemoteControl(clock); var p = new RemotePeer("bad");

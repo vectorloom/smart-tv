@@ -41,7 +41,9 @@ public static class DashboardHost
         builder.Services.AddSingleton(targets);
         builder.Services.AddSingleton(new SettingsStore(directory, environment, config["Settings:WrappingCertificate"], config["Settings:WrappingKey"], administrator));
         builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton<RemoteControl>();
+        var remoteSessions = config["Remote:SessionFile"] is { Length: > 0 } sessionsFile ? sessionsFile : Path.Combine(Path.GetTempPath(), "smart-tv-remote-sessions.json");
+        builder.Services.AddSingleton(sp => new RemoteControl(sp.GetRequiredService<TimeProvider>(), remoteSessions,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<RemoteControl>()));
         builder.Services.AddHttpClient("immich", client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(targets.Handler);
         builder.Services.AddHttpClient("weather", client => client.Timeout = TimeSpan.FromSeconds(15));

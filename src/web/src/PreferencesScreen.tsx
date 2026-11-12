@@ -18,8 +18,19 @@ function useViewport() {
 }
 
 /** /preferences ("Settings" in the rail) — phone pairing and what this TV browser reports about its screen. */
+/** Seconds the "Press again to unpair" confirmation stays armed. */
+export const UNPAIR_CONFIRM_MS = 6000;
+
 export function PreferencesScreen({ remote }: { remote: Remote }) {
   const weather = useWeather();
+  // Unpairing is one press away on a remote, so the first press only arms it.
+  const [confirming, setConfirming] = useState(false);
+  useEffect(() => {
+    if (!confirming) return;
+    const timer = window.setTimeout(() => setConfirming(false), UNPAIR_CONFIRM_MS);
+    return () => window.clearTimeout(timer);
+  }, [confirming]);
+  useEffect(() => { if (!remote.paired) setConfirming(false); }, [remote.paired]);
   const viewport = useViewport();
   const scale = stageScale(viewport.width, viewport.height);
   return <main className="screen-page preferences-screen">
@@ -35,11 +46,17 @@ export function PreferencesScreen({ remote }: { remote: Remote }) {
         </div> : <p className="muted">Pairing lets a phone on the same network act as this TV’s remote. It stays paired after reloads.</p>}
         <div className="card-actions">
           {remote.paired
-            ? <button className="pill" data-focus-key="unpair" data-autofocus onClick={() => remote.send({ type: 'unpair' })}><PhoneIcon />Unpair phone</button>
+            ? <button className={`pill${confirming ? ' pill-primary' : ''}`} data-focus-key="unpair" data-autofocus
+              onClick={() => { if (confirming) { setConfirming(false); remote.send({ type: 'forget' }); } else setConfirming(true); }}>
+              <PhoneIcon />{confirming ? 'Press again to unpair' : 'Unpair this TV'}
+            </button>
             : <button className="pill pill-primary" data-focus-key="pair" data-autofocus disabled={!remote.ready} onClick={() => remote.send({ type: 'code' })}>
               <PhoneIcon />{remote.code ? 'New code' : 'Pair phone'}
             </button>}
         </div>
+        {remote.paired && <p className="muted card-note">{confirming
+          ? 'The phone stops working as a remote and must pair again.'
+          : 'Unpairing ends this TV’s pairing; the phone must enter a new code.'}</p>}
       </section>
       <section className="card" aria-labelledby="display-heading">
         <h2 className="label" id="display-heading">Display</h2>

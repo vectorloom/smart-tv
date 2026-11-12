@@ -46,6 +46,8 @@ export function firstPage(albumId: string, signal?: AbortSignal): Promise<PhotoP
     page.then(resolve, reject);
   });
 }
+/** Whether an album's first page is already cached (loading it again costs nothing). */
+export function hasFirstPage(albumId: string): boolean { return firstPages.has(albumId); }
 /** Test hook: forget cached first pages. */
 export function clearPhotoCache() { firstPages.clear(); }
 

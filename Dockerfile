@@ -16,8 +16,12 @@ COPY --from=web /source/web/dist /app/wwwroot
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=api /app ./
-RUN mkdir -p /app/state && chown "$APP_UID:$APP_UID" /app/state && chmod 700 /app/state
+# /app/state: encrypted settings (Milestone 3 volume). /app/data: small runtime state that should
+# survive restarts and redeploys (last good forecast, hashed phone-remote sessions), on the data volume.
+RUN mkdir -p /app/state /app/data && chown "$APP_UID:$APP_UID" /app/state /app/data && chmod 700 /app/state /app/data
 USER $APP_UID
-ENV ASPNETCORE_URLS=http://+:8080
+ENV ASPNETCORE_URLS=http://+:8080 \
+    Weather__CacheFile=/app/data/weather.json \
+    Remote__SessionFile=/app/data/remote-sessions.json
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "SmartTv.Api.dll"]

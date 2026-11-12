@@ -49,7 +49,7 @@ button:focus, select:focus, input:focus, a:focus-visible {
 .slide-caption > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slide-controls { display: flex; align-items: center; justify-content: center; gap: 14px; }
 .interval { display: flex; align-items: center; gap: 10px; margin: 0 8px; color: var(--muted); font-size: 19px; }
-.key-hint { margin: 17px 0 0; color: var(--muted); text-align: center; font-size: 13px; }
+.key-hint { margin: 17px 0 0; color: var(--muted); text-align: center; font-size: 16px; }
 .key-hint span { margin: 0 14px; }
 .slide-message { position: absolute; max-width: 70%; padding: 24px; border: 1px solid var(--border); border-radius: var(--radius-control); background: #171817ee; text-align: center; font-size: 22px; }
 .slideshow .slide-top, .slideshow .slide-bottom[hidden], .slideshow .slide-caption, .slideshow .key-hint, .slideshow .slide-message { display: none; }
@@ -82,43 +82,10 @@ button:focus, select:focus, input:focus, a:focus-visible {
 .settings-album img { width: 68px; height: 68px; border-radius: 8px; object-fit: cover; }
 .settings-album small { display: block; margin-top: 7px; color: var(--muted); font-size: 15px; }
 
+/* Phone-sized browsers: only the phone remote and administrator pages reflow. TV screens live on the
+   scaled 1920×1080 stage, where viewport media queries do not apply. */
 @media (max-width: 600px) {
-  .dashboard { padding: 0 20px; }
-  .dashboard > header { min-height: 82px; gap: 12px; }
-  .wordmark { font-size: 27px; }
-  .header-meta { gap: 10px; }
-  .header-label { font-size: 9px; letter-spacing: 1px; }
-  .header-end { gap: 5px; font-size: 10px; letter-spacing: 0; }
-  .wifi-icon { width: 17px; height: 17px; }
-  .dashboard > main { padding-top: 28px; }
-  .dashboard > main .heading-row { margin-bottom: 25px; }
-  .heading-row h1 { font-size: 38px; letter-spacing: -1px; }
-  .subtitle { font-size: 17px; }
-  .album-grid, .photo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
-  .album-art { height: 145px; }
-  .album-info { padding: 13px; }
-  .album-info h3 { font-size: 18px; }
-  .section-label > span, .dashboard > footer > span:last-child { display: none; }
-  button, select { min-height: 54px; padding: 11px 15px; font-size: 17px; }
-  .dashboard .weather-panel, .collection-panel { padding: 17px; }
-  .dashboard .weather-heading { flex-direction: column; gap: 10px; }
-  .dashboard .weather-current-icon { width: 56px; font-size: 52px; }
-  .dashboard .weather-temperature { font-size: 42px; }
-  .dashboard .weather-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .dashboard .weather-forecasts { grid-template-columns: 1fr; }
-  .dashboard .weather-hourly { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .dashboard .weather-daily { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .dashboard .weather-day { padding: 7px 2px; font-size: 11px; }
-  .dashboard .weather-day strong { font-size: 13px; }
-  .dashboard .weather-day strong span { font-size: 11px; }
-  .actions { flex-wrap: wrap; }
-  .slide-controls { flex-wrap: wrap; gap: 9px; }
-  .slide-top { padding: 18px; }
-  .slide-top .wordmark, .key-hint { display: none; }
-  .slide-top button { margin-left: auto; }
-  .slide-bottom { padding: 28px 18px 18px; }
-  .slide-caption { margin-bottom: 12px; }
-  .interval { font-size: 15px; }
-  .dashboard > footer { min-height: 62px; font-size: 12px; }
+  .remote-page button, .remote-page select, .settings-page button, .settings-page select { min-height: 54px; padding: 11px 15px; font-size: 17px; }
+  .remote-page .actions, .settings-page .actions { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }

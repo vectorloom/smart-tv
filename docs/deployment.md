@@ -102,8 +102,9 @@ services in project `smart-tv` before and after deployment. The named settings
 volume, certificate mounts, protected environment, and admin service are
 expected to remain in place.
 
-Recreating the dashboard causes a short interruption and loses in-memory phone
-pairing sessions; phones must pair again. If startup or the bounded health poll
+Recreating the dashboard causes a short interruption. Phone pairings and the last
+good weather forecast survive it when the data volume (below) is mounted; without
+it they are kept in memory only and phones must pair again. If startup or the bounded health poll
 fails, the script attempts to tag the previous image under a rollback tag and
 recreate only `dashboard` with that image. It reports deployment and rollback
 health separately. Rollback cannot reverse application data migrations,
@@ -119,3 +120,42 @@ environment, bind mounts, volume, published `10.0.0.11:8080` binding, labels,
 and CPU architecture match the running container. If that cannot be established,
 the script intentionally stops before image transfer; do not supply the protected
 backup as `--env-file`.
+
+## Data volume (runtime state)
+
+The image defaults two small state files to `/app/data`:
+
+| File | Setting (image default) | Contents |
+| --- | --- | --- |
+| `/app/data/weather.json` | `Weather__CacheFile` | Last good Open-Meteo forecast, served (marked stale, with its time) while Open-Meteo is unreachable; ignored after a day |
+| `/app/data/remote-sessions.json` | `Remote__SessionFile` | Paired phone-remote sessions: SHA-256 hashes of the TV and phone credentials and the expiry (30 days, sliding on each reconnect). No raw credentials, codes or addresses. Written with mode 0600 |
+
+`compose.yaml` mounts the writable named volume `smart-tv_data` at `/app/data`. The
+container root filesystem stays read-only; the image creates `/app/data` owned by the
+unprivileged application user, so a new named volume inherits that ownership. The
+settings volume stays read-only for the dashboard and is not used for this state.
+
+These defaults are image `ENV` values, not Compose environment entries, so the
+deployment script's environment comparison is unaffected. If either file cannot be
+written (for example, no volume is mounted and the root filesystem is read-only), the
+dashboard logs a warning and keeps the state in memory only.
+
+### One-time production change (requires approval)
+
+`scripts/deploy.sh` never edits the production Compose files. Before or after the
+first deployment of an image with these defaults, update
+`/home/lazyboy/projects/smart-tv/compose.yaml` on the server to match this
+repository (the `data:/app/data` volume entry under `dashboard` and the top-level
+`volumes: data:`), then recreate only the dashboard:
+
+```bash
+cd /home/lazyboy/projects/smart-tv
+docker compose -f compose.yaml -f compose.settings.yaml config --quiet   # validates the merge
+docker compose -f compose.yaml -f compose.settings.yaml up -d --no-deps dashboard
+```
+
+Use the same `SMART_TV_IMMICH_ADDRESSES` and `SMART_TV_BIND` exports that the
+deployment script supplies. The existing preflight checks still require the
+`smart-tv_settings` read-only mount and the certificate mounts; the additional data
+mount does not affect them. To remove all stored state, stop the dashboard and run
+`docker volume rm smart-tv_data`; every phone then pairs again.

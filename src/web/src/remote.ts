@@ -70,7 +70,13 @@ export function useRemote(role: 'tv' | 'phone', onCommand?: (command: Command) =
         } else if (message.type === 'code') { setCode(message.code); setExpires(message.expires); }
         else if (message.type === 'codeExpired') setCode('');
         else if (message.type === 'command') callback.current?.(message.command);
-        else if (message.type === 'replaced') {
+        else if (message.type === 'forgotten') {
+          // "Unpair this TV": the server ended this TV's session; forget it and register afresh.
+          if (loadCredential(role) === credential.current) saveCredential(role, '');
+          credential.current = ''; setPaired(false); setConnected(false); setCode('');
+          setStatus('Unpaired. No phone connected');
+          ws.close();
+        } else if (message.type === 'replaced') {
           // Another tab took over this TV session: start a fresh one without touching storage.
           credential.current = ''; setPaired(false); setConnected(false); setCode('');
           ws.close();

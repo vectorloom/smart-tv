@@ -17,7 +17,7 @@ const daily = Array.from({ length: 7 }, (_, i) => ({
   date: `2026-11-${12 + i}`, highF: 74 - i, lowF: 51 - i, weatherCode: [0, 2, 61, 3, 95, 0, 1][i], condition: ['Clear sky', 'Partly cloudy', 'Light rain', 'Overcast', 'Thunderstorm', 'Clear sky', 'Mainly clear'][i], precipitationProbability: [0, 10, 70, 20, 40, 0, 5][i],
 }));
 
-async function mockApi(page: Page) {
+async function mockApi(page: Page, list = albums) {
   // A local stand-in for the remote-control socket: these tests load many pages quickly and would
   // otherwise hit the server's per-address connection limit. The pairing flow itself is in remote.spec.
   await page.routeWebSocket(/\/api\/remote$/, ws => ws.onMessage(raw => {
@@ -32,9 +32,12 @@ async function mockApi(page: Page) {
       const n = Number(/-(\d+)\/image$/.exec(path)?.[1] ?? 0);
       return route.fulfill({ contentType: 'image/svg+xml', body: `<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="960"><rect width="1440" height="960" fill="${colours[n % colours.length]}"/><circle cx="1000" cy="300" r="120" fill="#e8c38a"/></svg>` });
     }
-    if (path === '/api/albums') return route.fulfill({ json: albums });
+    if (path === '/api/albums') return route.fulfill({ json: list });
     const photos = /^\/api\/albums\/([^/]+)\/photos$/.exec(path);
-    if (photos) return route.fulfill({ json: { items: photosOf(photos[1]), nextPage: null } });
+    if (photos) {
+      const count = list.find(a => a.id === photos[1])?.assetCount ?? 0;
+      return route.fulfill({ json: { items: Array.from({ length: count }, (_, i) => ({ id: `${photos[1]}-${i + 1}`, name: `${photos[1]} ${i + 1}` })), nextPage: null } });
+    }
     if (path === '/api/slideshow/next') return route.fulfill({ json: { albumId: 'lake', albumName: 'Summer at the lake', photoId: 'lake-1', takenAt: '2024-07-04T18:30:00.000Z', index: 1, total: 14 } });
     if (path === '/api/weather') return route.fulfill({ json: {
       location: 'Coppell', lastUpdated: '2026-11-12T18:14:00Z', stale: false,
@@ -288,8 +291,39 @@ test('Settings shows pairing and display details', async ({ page }) => {
   await expect(page.locator('.pair-code')).toHaveText('12345678');
 });
 
-const screens = [['home', '/'], ['photos', '/photos'], ['album', '/photos/lake'], ['weather', '/weather'],
-  ['automation', '/home-automation'], ['calendar', '/calendar'], ['settings', '/preferences']] as const;
+test('Photos caps rows at 20 and loads thumbnails only near the focused row', async ({ page }) => {
+  const many = Array.from({ length: 25 }, (_, i) => ({ id: `al${i}`, name: `Album ${i + 1}`, assetCount: 4, thumbnailId: null }));
+  const listed: string[] = [];
+  page.on('request', request => {
+    const id = /\/api\/albums\/([^/]+)\/photos\?/.exec(request.url())?.[1];
+    if (id) listed.push(id);
+  });
+  await mockApi(page, many);
+  await page.goto('/photos');
+  await expect.poll(() => focused(page)).toBe('photo:al0:al0-1');
+  await expect(page.locator('.photo-row')).toHaveCount(20);
+  // Albums 21–25 stay reachable as plain buttons.
+  await expect(page.getByRole('region', { name: 'More albums' }).getByRole('button')).toHaveCount(5);
+  const imagesIn = (row: number) => page.locator(`.photo-row[data-row="${row}"] .thumb img`).count();
+  // Only the focused row and the two after it have fetched photo lists and show images.
+  expect([...new Set(listed)].sort()).toEqual(['al0', 'al1', 'al2']);
+  expect(await imagesIn(0)).toBe(4);
+  expect(await imagesIn(2)).toBe(4);
+  expect(await imagesIn(3)).toBe(0);
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowDown');
+  await expect.poll(() => focused(page)).toMatch(/^photo:al5:/);
+  await expect.poll(() => imagesIn(7)).toBe(4);
+  // Rows that fell behind release their images but keep their buttons, so Back can return to them.
+  expect(await imagesIn(0)).toBe(0);
+  expect(await page.locator('[data-focus-key="photo:al0:al0-1"]').count()).toBe(1);
+  expect(listed).not.toContain('al10');
+  // The More albums buttons open their album.
+  await page.getByRole('region', { name: 'More albums' }).getByRole('button', { name: /Album 25/ }).click();
+  await expect(page).toHaveURL(/\/photos\/al24$/);
+});
+
+const screens = [['home', '/'], ['photos', '/photos'], ['album', '/photos/lake'], ['viewer', '/photos/lake?photo=lake-2'],
+  ['weather', '/weather'], ['automation', '/home-automation'], ['calendar', '/calendar'], ['settings', '/preferences']] as const;
 for (const [width, height] of [[1920, 1080], [960, 540]] as const) {
   test(`every screen fits ${width}×${height}: stage visible, page never scrolls, text ≥16px at 1080p scale`, async ({ page }) => {
     await page.setViewportSize({ width, height });
@@ -297,13 +331,18 @@ for (const [width, height] of [[1920, 1080], [960, 540]] as const) {
     await mockApi(page);
     for (const [name, path] of screens) {
       await page.goto(path);
-      await expect(page.locator('.stage h1, .stage .clock').first()).toBeVisible();
+      if (name === 'viewer') {
+        // The full-screen viewer with its controls showing.
+        await expect(page.getByRole('dialog')).toBeFocused();
+        await page.keyboard.press('Enter');
+        await expect(page.locator('.slide-bottom')).toBeVisible();
+      } else await expect(page.locator('.stage h1, .stage .clock').first()).toBeVisible();
       if (name === 'photos') await expect(page.locator('.photo-row .thumb img').first()).toBeVisible();
       if (name === 'weather') await expect(page.locator('.week li')).toHaveCount(7);
       if (width === 1920) await page.screenshot({ path: `test-results/screen-${name}.png`, animations: 'disabled' });
       // Open the rail (on home with the first key, elsewhere by focusing it) so its labels are checked too.
       if (name === 'home') await page.keyboard.press('ArrowDown');
-      else await page.getByRole('navigation', { name: 'Main' }).getByRole('button').first().focus();
+      else if (name !== 'viewer') await page.getByRole('navigation', { name: 'Main' }).getByRole('button').first().focus();
       if (width === 1920 && (name === 'home' || name === 'photos'))
         await page.screenshot({ path: `test-results/screen-${name}-rail.png`, animations: 'disabled' });
       const result = await page.evaluate(() => {

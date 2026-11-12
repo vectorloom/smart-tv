@@ -62,7 +62,8 @@ Copy `.env.example` to `.env` locally and replace placeholders. `.env` is exclud
 | `SMART_TV_BIND` | N/A | Host address for application port 8080; default `127.0.0.1` |
 | `WEATHER_LATITUDE` | `Weather__Latitude` | Forecast latitude; defaults to Dallas, Texas (`32.7767`) |
 | `WEATHER_LONGITUDE` | `Weather__Longitude` | Forecast longitude; defaults to Dallas, Texas (`-96.7970`) |
-| N/A | `Weather__CacheFile` | Optional path for the last good forecast; defaults to `smart-tv-weather.json` in the temp directory |
+| N/A | `Weather__CacheFile` | Last good forecast file; the image defaults to `/app/data/weather.json` on the data volume, local runs to the temp directory |
+| N/A | `Remote__SessionFile` | Paired remote sessions (hashed credentials and expiry); the image defaults to `/app/data/remote-sessions.json`, local runs to the temp directory |
 
 Weather uses the server-side Open-Meteo forecast API and needs no API key. The TV
 calls only the same-origin `/api/weather` endpoint. Coordinates use decimal WGS84
@@ -70,9 +71,9 @@ degrees; the default is central Dallas. Forecasts use Fahrenheit and the
 `America/Chicago` timezone. The backend caches successful results for 20 minutes.
 If Open-Meteo fails, it serves the last good forecast with `stale: true` and the time
 it was fetched, and logs the failure reason. The last good forecast is also written to
-`Weather__CacheFile`, so a restarted API can serve it (for up to a day) before Open-Meteo
-answers again. In the container the default path is on the `/tmp` tmpfs, which survives
-API restarts inside a running container but not a container restart. With nothing
+`Weather__CacheFile`, so a restarted or redeployed API can serve it (for up to a day)
+before Open-Meteo answers again. In the container it lives on the `smart-tv_data`
+volume (see [docs/deployment.md](docs/deployment.md#data-volume-runtime-state)). With nothing
 cached, a failed request is retried after 15 seconds rather than one minute.
 
 The TV refreshes weather every seven minutes. After a failure it retries after 5, 10,
@@ -152,7 +153,7 @@ The browser Fullscreen API is requested directly from the activation gesture. If
 | Route | Screen |
 | --- | --- |
 | `/` | Home: photo slideshow, clock and weather |
-| `/photos` | Photos: one horizontal row per album (first 12 photos and **See all**) |
+| `/photos` | Photos: one horizontal row per album (first 12 photos and **See all**), at most 20 rows; further albums are listed as buttons. Only rows within two of the focused row load thumbnails |
 | `/photos/:albumId` | Album: every photo, **Play album**; `?photo=<id>` opens the full-screen viewer |
 | `/weather` | Current conditions, next 12 hours, 7 days and the regional wind map |
 | `/home-automation` | Placeholder until Home Assistant is connected |
@@ -174,9 +175,9 @@ The home screen never scrolls. A random photo from the selected albums fills the
 1. On the TV, open **Settings** in the navigation rail (`/preferences`) and select **Pair phone**. The TV displays an eight-digit code for two minutes. **New pairing code** invalidates the previous code.
 2. Open `/remote` on the same application origin in a second tab or browser context; enter the code and choose **Pair with TV**. For local development use `http://127.0.0.1:5173/remote`. A second tab simulates the phone without LAN access.
 3. Use the D-pad and Select to navigate. Back leaves the slideshow or album; Home returns to albums. Play/Pause starts the open album or toggles playback; Next/Previous change slideshow photos even during image loading. In slideshow controls, arrows move focus; on the interval selector, the phone's Up/Down changes its value and Left/Right leaves it.
-4. Either screen can **Unpair phone**. The TV can issue another code to replace its paired phone. Pairing a new phone revokes the previous phone immediately.
+4. The phone can **Unpair phone**; the TV can **Unpair this TV** (Settings). The TV can issue another code to replace its paired phone. Pairing a new phone revokes the previous phone immediately.
 
-The TV and phone display connection state. Commands are disabled on the phone while disconnected. Both ends reconnect automatically (500 ms initial delay, exponential backoff capped at 10 seconds), with a heartbeat every 15 seconds. The browser closes a connection without a response for 40 seconds; the server limits idle receives to 45 seconds. Commands during disconnection are not queued or replayed. Reconnection resumes the same dashboard session. Each page keeps its credential in `localStorage` (`still.remote.tv` / `still.remote.phone`), so reloading either page or power-cycling the TV keeps the pairing. A paired session expires after 30 days without either side reconnecting; each reconnect renews it. An unpaired TV session keeps the original limits: two minutes offline or 12 hours in total. A backend restart ends all sessions.
+The TV and phone display connection state. Commands are disabled on the phone while disconnected. Both ends reconnect automatically (500 ms initial delay, exponential backoff capped at 10 seconds), with a heartbeat every 15 seconds. The browser closes a connection without a response for 40 seconds; the server limits idle receives to 45 seconds. Commands during disconnection are not queued or replayed. Reconnection resumes the same dashboard session. Each page keeps its credential in `localStorage` (`still.remote.tv` / `still.remote.phone`), so reloading either page or power-cycling the TV keeps the pairing. A paired session expires after 30 days without either side reconnecting; each reconnect renews it. Paired sessions are saved to `Remote__SessionFile` as SHA-256 hashes of the two credentials plus the expiry, so they survive a backend restart or redeploy; the server never stores a raw credential. An unpaired TV session keeps the original limits (two minutes offline or 12 hours in total) and is never saved. **Unpair this TV** on the TV's Settings screen (pressed twice to confirm) ends the TV's session, revokes the phone and removes the saved session; the TV then starts a fresh one. Each WebSocket connection logs its address and User-Agent once (printable ASCII, at most 256 characters), which identifies the TV box's browser.
 
 Each dashboard receives a separate 256-bit cryptographically random owner credential. Tabs on the same origin share `localStorage`; if a second TV tab resumes the stored session, the server sends the previous tab `replaced` and it starts a fresh, unstored session, so tabs never fight over one session. Only a tab whose stored credential matches its own, or that has just paired, writes to storage. A successful code exchange issues a separate 256-bit phone credential scoped to exactly that dashboard. One phone session is active per dashboard. Codes use `RandomNumberGenerator.GetInt32`, are single-use and expire after two minutes. Registration, pairing, and resume attempts share a limit of 20 per source IP per minute, across connections. WebSocket upgrades are limited to 60 per IP per minute, messages to 30 per connection per second, active sessions to 1,000, incoming messages to less than 1 KiB, and outgoing queues to 32 messages. Slow peers disconnect. Limits deliberately include failed attempts. On a shared proxy, clients share the proxy's IP budget; no untrusted forwarded-address header is used.
 
@@ -198,7 +199,7 @@ All protocol messages are JSON **text frames**, never URL parameters:
 
 The server accepts only `Up`, `Down`, `Left`, `Right`, `Select`, `Back`, `Home`, `PlayPause`, `Next`, and `Previous`. It returns `status`, `error`, `denied`, `codeExpired`, `expired`, or `revoked` updates as appropriate. Unauthorized commands are rejected before delivery. Commands are transient, best-effort delivery; there is no persisted queue or exactly-once acknowledgement. The UI does not retry commands after a transport interruption.
 
-Credentials exist in browser memory and `localStorage` (see above) and in server memory; never in URLs, cookies, or application logs. Anyone with access to the TV browser's site data can control that TV until it is unpaired. There is no shared-tab credential and no frontend Immich key. Do not enable WebSocket payload logging or capture production pairing/session frames in traces. Pairing authorizes control only: photo viewing remains accessible to anyone who can reach the dashboard, as in Milestone 1.
+Credentials exist in browser memory and `localStorage` (see above); the server keeps only their SHA-256 hashes, in memory and in the session file. They are never in URLs, cookies, or application logs. Anyone with access to the TV browser's site data can control that TV until it is unpaired. There is no shared-tab credential and no frontend Immich key. Do not enable WebSocket payload logging or capture production pairing/session frames in traces. Pairing authorizes control only: photo viewing remains accessible to anyone who can reach the dashboard, as in Milestone 1.
 
 ### Future LAN-only access — not enabled
 
@@ -235,7 +236,7 @@ PLAYWRIGHT_BROWSERS_PATH=../../.local/playwright npx playwright install chromium
 PLAYWRIGHT_BROWSERS_PATH=../../.local/playwright npm run test:browser
 ```
 
-Do not use `playwright install --with-deps` on this host; it installs system packages. Browser tests verify TV-sized keyboard operation and mobile overflow. They also use two independent browser contexts against the real WebSocket endpoint to verify pairing, command delivery, tab isolation, transport reconnection, and unpairing. API tests cover expiry, rate limits, authorization, malformed messages, credential revocation, and disconnected delivery. Their screenshots and reports are ignored build artifacts.
+Do not use `playwright install --with-deps` on this host; it installs system packages. Browser tests verify TV-sized keyboard operation and mobile overflow. They also use two independent browser contexts against the real WebSocket endpoint to verify pairing, command delivery, tab isolation, transport reconnection, and unpairing. A longevity test runs about 200 home-slideshow crossfades and 200 viewer advances and checks that the DOM size, live image objects (after garbage collection) and object URLs stay flat. Every screen, including the full-screen viewer with its controls, is checked for text below 16 px. API tests cover expiry, rate limits, authorization, malformed messages, credential revocation, session persistence, and disconnected delivery. Their screenshots and reports are ignored build artifacts.
 
 ## Deployment
 
