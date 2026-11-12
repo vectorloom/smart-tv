@@ -173,8 +173,8 @@ flushed temporary file, and atomic replacement, so a stale editor or failed requ
 cannot partially change the key/URL/selection. Each subsequent TV request reads the
 new revision without a container restart. An already-open gallery should be reloaded
 or revisited to refresh its list; a running slideshow is not interrupted by settings
-management. Previously downloaded images can remain visible/cached for the existing
-60-second cache interval. Unselected IDs remain blocked server-side on new requests.
+management. Previously downloaded images can remain visible: browsers cache them for 60
+seconds, and the server's image cache serves them for up to 30 minutes. Unselected IDs remain blocked server-side on new requests.
 
 ## Backup and restore
 

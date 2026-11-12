@@ -32,6 +32,8 @@ async function gallery(page: Page, mode: 'missed-load' | 'slow') {
   });
   await page.clock.install();
   await page.goto('/');
+  await expect(page.getByRole('button', { name: 'All albums (1)' })).toBeVisible();
+  await page.keyboard.press('ArrowRight'); // reveals the album row
   await page.getByRole('button', { name: /Five photos/ }).click();
   await page.getByRole('button', { name: 'Play album' }).click();
   return { errors, release: () => release!() };

@@ -1,5 +1,6 @@
 export type Album = { id: string; name: string; assetCount: number; thumbnailId?: string | null };
-export type Photo = { id: string; name: string };
+export type Photo = { id: string; name: string; takenAt?: string | null };
+export type SlideshowPhoto = { albumId: string; albumName: string; photoId: string; takenAt: string | null; index: number; total: number };
 export type PhotoPage = { items: Photo[]; nextPage: number | null };
 export type WeatherPeriod = { time: string; temperatureF: number; weatherCode: number; condition: string; precipitationProbability: number | null };
 export type WeatherForecast = {
@@ -25,20 +26,42 @@ export async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
 export const imageUrl = (album: string, photo: string, size: 'thumbnail' | 'preview' = 'thumbnail') =>
   `/api/albums/${encodeURIComponent(album)}/photos/${encodeURIComponent(photo)}/image?size=${size}`;
 
+/** Next random home-screen photo, or null when no selected album has photos (HTTP 204). */
+export async function getNextSlide(signal?: AbortSignal): Promise<SlideshowPhoto | null> {
+  const response = await fetch('/api/slideshow/next', { signal });
+  if (response.status === 204) return null;
+  if (!response.ok) {
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.message ?? 'Could not load the next photo.');
+  }
+  const data = await response.json() as Partial<SlideshowPhoto> | null;
+  if (!data || typeof data.albumId !== 'string' || typeof data.photoId !== 'string' || typeof data.albumName !== 'string' ||
+      typeof data.index !== 'number' || typeof data.total !== 'number')
+    throw new Error('The photo service returned an unexpected response.');
+  return { ...data, takenAt: typeof data.takenAt === 'string' ? data.takenAt : null } as SlideshowPhoto;
+}
+
 export async function getWeather(signal?: AbortSignal): Promise<WeatherForecast> {
   const response = await fetch('/api/weather', { signal });
   if (!response.ok) {
     const error = await response.json().catch(() => null);
     throw new Error(error?.message ?? 'Weather is temporarily unavailable.');
   }
-  const data: unknown = await response.json();
+  const forecast = parseForecast(await response.json());
+  if (!forecast) throw new Error('Weather forecast is incomplete. It will retry automatically.');
+  return forecast;
+}
+
+/** Validates a forecast from the API or from local storage; null when anything the UI reads is missing. */
+export function parseForecast(data: unknown): WeatherForecast | null {
   const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
   const period = (value: unknown): value is WeatherPeriod => object(value) &&
     typeof value.time === 'string' && typeof value.temperatureF === 'number' &&
     typeof value.weatherCode === 'number' && typeof value.condition === 'string' &&
     (value.precipitationProbability === null || typeof value.precipitationProbability === 'number');
   const current = object(data) && object(data.current) ? data.current : null;
-  if (!object(data) || typeof data.location !== 'string' || typeof data.lastUpdated !== 'string' || typeof data.stale !== 'boolean' ||
+  if (!object(data) || typeof data.location !== 'string' || typeof data.lastUpdated !== 'string' ||
+      !Number.isFinite(Date.parse(data.lastUpdated)) || typeof data.stale !== 'boolean' ||
       !object(data.current) || !period(data.current) || typeof (data.current as Record<string, unknown>).isDay !== 'boolean' ||
       !current || typeof current.relativeHumidity !== 'number' || !Number.isFinite(current.relativeHumidity) ||
       typeof current.windSpeedMph !== 'number' || !Number.isFinite(current.windSpeedMph) ||
@@ -49,7 +72,7 @@ export async function getWeather(signal?: AbortSignal): Promise<WeatherForecast>
         typeof day.date === 'string' && typeof day.highF === 'number' && typeof day.lowF === 'number' &&
         typeof day.weatherCode === 'number' && typeof day.condition === 'string' &&
         (day.precipitationProbability === null || typeof day.precipitationProbability === 'number')))
-    throw new Error('Weather forecast is incomplete. It will retry automatically.');
+    return null;
   return data as unknown as WeatherForecast;
 }
 

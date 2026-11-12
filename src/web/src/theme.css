@@ -1,0 +1,152 @@
+/* Design tokens and the TV stage. All TV sizes are CSS px on the 1920×1080 reference
+   canvas; <Stage> scales the canvas to the real viewport (see Stage.tsx). */
+@import '@fontsource/inter/latin-300.css';
+@import '@fontsource/inter/latin-400.css';
+@import '@fontsource/inter/latin-500.css';
+@import '@fontsource/inter/latin-600.css';
+
+:root {
+  color-scheme: dark;
+  --font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Palette */
+  --bg: #0F1012;
+  --surface: #18191C;
+  --surface-raised: #212226;
+  --photo-placeholder: #2B2724;
+  --text: #F2F0EC;
+  --text-secondary: #C9C4BC;
+  --text-label: #A49E95;
+  --accent: #F2A33A;
+  --accent-tint: rgba(242, 163, 58, .16);
+  --rain: #7FB2E5;
+  --cloud: #A9BCCD;
+  --ok: #8FD19E;
+  --hairline: rgba(242, 240, 236, .09);
+  --dim: rgba(8, 8, 10, .55);
+
+  /* Type */
+  --text-min: 16px;
+  --text-label-size: 18px;
+  --label-tracking: .12em;
+
+  /* Shape and spacing */
+  --radius-card: 28px;
+  --radius-card-inner: 24px;
+  --radius-tile: 18px;
+  --radius-tile-small: 16px;
+  --screen-padding: 48px;
+  --target-min: 48px;
+
+  /* Focus: the only cue on a TV */
+  --focus-ring: 0 0 0 4px var(--accent);
+  --focus-scale: 1.04;
+
+  /* Legacy names used by the album grid, full-screen slideshow, phone remote and admin pages */
+  --surface-hover: #2A2B30;
+  --border: #3A3B41;
+  --border-subtle: #2A2B30;
+  --border-hover: #5E5A54;
+  --muted: var(--text-secondary);
+  --muted-dim: var(--text-label);
+  --amber: var(--accent);
+  --amber-bright: #F7BC66;
+  --amber-ink: #211507;
+  --focus-halo: var(--bg);
+  --radius-control: 12px;
+
+  font-family: var(--font);
+  font-synthesis: none;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* The phone remote and administrator pages keep their original green palette. */
+.remote-page, .settings-page {
+  --surface: #1b221c;
+  --surface-raised: #222923;
+  --border: #424b42;
+  --border-subtle: #303830;
+  --text: #f2f3ea;
+  --muted: #aab5a6;
+  --muted-dim: #84917e;
+  --amber: #d7ecab;
+  --amber-bright: #e5f6c5;
+  --amber-ink: #172115;
+  --focus-halo: #101412;
+  --radius-card: 16px;
+}
+
+[hidden] { display: none !important; }
+
+/* ---- TV stage ---------------------------------------------------------------- */
+html.tv, html.tv body { height: 100%; overflow: hidden; background: var(--bg); }
+.stage {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  transform: translate(-50%, -50%) scale(var(--stage-scale, 1));
+  background: var(--bg);
+  color: var(--text);
+  font-size: 22px;
+}
+.stage .dashboard { height: 100%; outline: none; }
+.tabular, .stage time { font-variant-numeric: tabular-nums; }
+.label {
+  margin: 0;
+  color: var(--text-label);
+  font-size: var(--text-label-size);
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+}
+.icon { flex-shrink: 0; }
+
+/* Focus ring for every TV control. :focus rather than :focus-visible so focus moved by the
+   phone remote (no keyboard event) is still visible. */
+.stage button, .stage a, .stage select { transition: transform .15s ease, box-shadow .15s ease, background-color .15s ease; }
+.stage button:focus, .stage select:focus, .stage input:focus, .stage a:focus {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  background-image: linear-gradient(var(--accent-tint), var(--accent-tint));
+  transform: scale(var(--focus-scale));
+  position: relative;
+  z-index: 2;
+}
+
+/* Shared pill button (album shortcuts, pairing) */
+.stage .pill {
+  min-height: 56px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 300px;
+  padding: 0 22px;
+  border: 1px solid rgba(242, 240, 236, .18);
+  border-radius: var(--radius-tile-small);
+  background-color: rgba(15, 16, 18, .72);
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.stage .pill > span { overflow: hidden; text-overflow: ellipsis; }
+.stage .pill .icon { width: 24px; height: 24px; color: var(--accent); }
+.stage .pill-quiet { background-color: rgba(15, 16, 18, .5); }
+.stage .pill:hover { background-color: rgba(42, 43, 48, .9); }
+.stage .pill-small { min-height: var(--target-min); padding: 0 16px; font-size: 16px; background-color: var(--surface); border-color: transparent; }
+.stage .pill-small .icon { width: 20px; height: 20px; }
+
+/* ---- Legacy screens inside the stage (replaced by the Photos screen in Stage 2) ---- */
+.legacy { height: 100%; overflow-y: auto; padding: var(--screen-padding) 64px; }
+.legacy .heading-row h1 { font-family: var(--font); font-size: 56px; font-weight: 600; letter-spacing: -.01em; }
+.legacy .album-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; }
+.stage .slide-top, .stage .slide-bottom { padding-inline: 76px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .stage button:focus, .stage a:focus, .stage select:focus { transform: none; }
+}

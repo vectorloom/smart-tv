@@ -37,6 +37,15 @@ public sealed class RemoteControl(TimeProvider clock) : IDisposable
     private readonly Dictionary<string, (DateTimeOffset Start, int Count)> attempts = [];
     private readonly Dictionary<string, (DateTimeOffset Start, int Count)> connections = [];
     private ITimer? cleanup;
+    // A paired TV and phone stay paired across reloads, TV power-offs, and phone sleeps while
+    // either side reconnects at least once in this window. Unpaired TV sessions keep the short
+    // offline grace and absolute lifetime: a reloaded TV simply registers again.
+    public static readonly TimeSpan PairedLifetime = TimeSpan.FromDays(30);
+    public static readonly TimeSpan OfflineGrace = TimeSpan.FromMinutes(2);
+    private static void Renew(Session s, DateTimeOffset now)
+    {
+        if (s.PhoneToken != null && s.Expires < now + PairedLifetime) s.Expires = now + PairedLifetime;
+    }
     private static readonly HashSet<string> Commands = ["Up", "Down", "Left", "Right", "Select", "Back", "Home", "PlayPause", "Next", "Previous"];
     private static string Token() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     public void StartCleanup() => cleanup = clock.CreateTimer(_ => Tick(), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
@@ -56,7 +65,7 @@ public sealed class RemoteControl(TimeProvider clock) : IDisposable
         var now = clock.GetUtcNow();
         foreach (var s in sessions.ToArray())
         {
-            if (now >= s.Expires || (s.OfflineSince is {} offline && now - offline >= TimeSpan.FromMinutes(2)))
+            if (now >= s.Expires || (s.PhoneToken == null && s.OfflineSince is {} offline && now - offline >= OfflineGrace))
             { s.Tv?.Send(new { type = "expired" }); s.Phone?.Send(new { type = "expired" }); sessions.Remove(s); }
             else if (s.Code != null && now >= s.CodeExpires)
             { s.Code = null; s.Tv?.Send(new { type = "codeExpired" }); }
@@ -97,13 +106,21 @@ public sealed class RemoteControl(TimeProvider clock) : IDisposable
                         : s.TvToken == value || s.PhoneToken == value));
                     if (session == null) { peer.Send(new { type = "denied", message = "Pairing or session expired. Pair again." }); return; }
                     var tv = type == "resume" && session.TvToken == value;
-                    if (tv) { session.Tv?.Closed.Cancel(); session.Tv = peer; session.OfflineSince = null; }
+                    if (tv)
+                    {
+                        // Another tab (or a reloaded page whose old socket is still half-open) now owns
+                        // this TV session. Tell the old one so it starts a fresh session instead of
+                        // resuming in a loop; completing its outbox flushes the message, then closes.
+                        if (session.Tv is { } previous && previous != peer) { previous.Send(new { type = "replaced" }); previous.Outbox.Writer.TryComplete(); }
+                        session.Tv = peer; session.OfflineSince = null;
+                    }
                     else
                     {
                         session.Phone?.Send(new { type = "revoked" });
                         session.Phone = peer;
                         if (type == "pair") { session.PhoneToken = Token(); session.Code = null; }
                     }
+                    Renew(session, now);
                     peer.Authenticated = true;
                     peer.Send(new { type = "ready", credential = tv ? session.TvToken : session.PhoneToken, role = tv ? "tv" : "phone", connected = tv ? session.Phone != null : session.Tv != null });
                     Status(session); return;

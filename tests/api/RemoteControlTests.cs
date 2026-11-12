@@ -114,6 +114,44 @@ public class RemoteControlTests
         Send(service, b.Tv, new { type = "code" }); Last(b.Tv, "error");
     }
     [Fact]
+    public void PairedSessionsSurviveTvOfflineAndRenewOnReconnect()
+    {
+        using var service = new RemoteControl(clock);
+        var a = Register(service);
+        var phone = new RemotePeer("phone");
+        Send(service, phone, new { type = "pair", code = a.Code });
+        var phoneToken = Last(phone, "ready").GetProperty("credential").GetString();
+        // TV is switched off overnight and the phone sleeps: both reconnect with stored credentials.
+        service.Disconnect(a.Tv); service.Disconnect(phone);
+        clock.Now = clock.Now.AddDays(1); service.Tick();
+        var tv = new RemotePeer("tv"); Send(service, tv, new { type = "resume", credential = a.Token });
+        Assert.False(Last(tv, "ready").GetProperty("connected").GetBoolean());
+        var phone2 = new RemotePeer("phone"); Send(service, phone2, new { type = "resume", credential = phoneToken });
+        Last(phone2, "ready");
+        Read(tv); Send(service, phone2, new { type = "command", command = "Up" });
+        Assert.Equal("Up", Last(tv, "command").GetProperty("command").GetString());
+        // The lifetime slides from the last reconnect, then expires after 30 idle days.
+        clock.Now = clock.Now.AddDays(29); service.Tick(); Assert.DoesNotContain(Read(tv), m => m.GetProperty("type").GetString() == "expired");
+        clock.Now = clock.Now.AddDays(2); service.Tick(); Last(tv, "expired");
+    }
+    [Fact]
+    public void TvTakeoverTellsThePreviousTabInsteadOfFlapping()
+    {
+        using var service = new RemoteControl(clock);
+        var a = Register(service);
+        Read(a.Tv);
+        var second = new RemotePeer("tv"); Send(service, second, new { type = "resume", credential = a.Token });
+        Last(second, "ready");
+        Assert.Equal("replaced", Assert.Single(Read(a.Tv)).GetProperty("type").GetString());
+        // The replaced peer's outbox is completed, and its later disconnect leaves the session online.
+        Assert.False(a.Tv.Outbox.Writer.TryWrite(new { type = "late" }));
+        service.Disconnect(a.Tv);
+        var phone = new RemotePeer("phone");
+        Send(service, second, new { type = "code" });
+        Send(service, phone, new { type = "pair", code = Last(second, "code").GetProperty("code").GetString() });
+        Assert.True(Last(phone, "ready").GetProperty("connected").GetBoolean());
+    }
+    [Fact]
     public void MalformedMessagesAndFloodingAreBounded()
     {
         using var service = new RemoteControl(clock); var p = new RemotePeer("bad");

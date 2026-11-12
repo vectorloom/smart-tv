@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useActivity } from './activity';
 import { get, imageUrl, type Album, type Photo, type PhotoPage } from './api';
+import { Home } from './Home';
 import { isEditing, moveFocus } from './navigation';
 import { Slideshow } from './Slideshow';
-import { WeatherPanel } from './WeatherPanel';
+import { Stage } from './Stage';
 import { type Command, useRemote } from './remote';
+import { WeatherProvider } from './Weather';
+
+/** Keyboard keys that act like remote buttons. Arrows/Enter/Escape on a PC behave exactly like the D-pad. */
+export const KEY_COMMANDS: Record<string, Command> = {
+  ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Enter: 'Select', ' ': 'Select',
+  Escape: 'Back', Backspace: 'Back', BrowserBack: 'Back', GoBack: 'Back', Home: 'Home', MediaPlayPause: 'PlayPause',
+};
 
 function AlbumCard({ item, index, onSelect }: { item: Album; index: number; onSelect: () => void }) {
   const [imageFailed, setImageFailed] = useState(false);
@@ -19,8 +28,11 @@ function AlbumCard({ item, index, onSelect }: { item: Album; index: number; onSe
   </button>;
 }
 
+type View = 'home' | 'albums';
+
 export function App() {
   const [albums, setAlbums] = useState<Album[]>([]);
+  const [view, setView] = useState<View>('home');
   const [album, setAlbum] = useState<Album | null>(null);
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,19 +41,67 @@ export function App() {
   const [slide, setSlide] = useState<string | null>(null);
   const [visible, setVisible] = useState(60);
   const main = useRef<HTMLDivElement>(null);
+  const onHome = view === 'home' && !album;
   const returnFocus = useRef<HTMLElement | null>(null);
+  // The home button or album card that led to the current screen, restored on Back.
   const albumFocus = useRef<string | null>(null);
-  function home() { exit(); setAlbum(null); }
+  // Set only by Back/Home navigation, so an unrelated home render cannot consume the target.
+  const restoreOnHome = useRef(false);
+  // Bumped when the first key on an idle home reveals the album row; focus moves onto it after render.
+  const [rowRequest, setRowRequest] = useState(0);
+  const handledRow = useRef(0);
+  const activity = useActivity();
+
+  function home() {
+    exit();
+    if (album || view !== 'home') { restoreOnHome.current = true; activity.wake(); }
+    setAlbum(null); setView('home');
+  }
+  function back() {
+    if (album) { if (view === 'home') { restoreOnHome.current = true; activity.wake(); } setAlbum(null); }
+    else if (view === 'albums') { albumFocus.current = '__all'; restoreOnHome.current = true; activity.wake(); setView('home'); }
+    else if (activity.active) { activity.sleep(); main.current?.focus(); }
+  }
+  function openAlbum(item: Album) { albumFocus.current = item.id; setAlbum(item); }
   function command(value: Command) {
     if (isEditing(document.activeElement) && !(document.activeElement instanceof HTMLSelectElement)) return;
+    const wasIdle = activity.wake();
     if (value === 'Home') { home(); return; }
     if (slide) { window.dispatchEvent(new CustomEvent('tv-command', { detail: value })); return; }
-    if (value === 'Back') { setAlbum(null); return; }
+    if (value === 'Back') { back(); return; }
+    // On the idle home screen the first press only reveals the album row and focuses its first button.
+    if (onHome && (wasIdle || !main.current?.contains(document.activeElement) || document.activeElement === main.current)) {
+      setRowRequest(n => n + 1); return;
+    }
     if (['Up', 'Down', 'Left', 'Right'].includes(value)) moveFocus(main.current!, `Arrow${value}`);
     if (value === 'Select') (document.activeElement as HTMLElement)?.click();
     if (value === 'PlayPause' && album && photos.length && !loading && !error) open(photos[0]);
   }
   const remote = useRemote('tv', command);
+  const latestCommand = useRef(command);
+  latestCommand.current = command;
+
+  // Keys are handled at the window so a mouse click on the letterbox or photo never strands the keyboard.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const value = KEY_COMMANDS[event.key];
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      const slideshow = document.querySelector<HTMLElement>('.slideshow');
+      if (slideshow) {
+        // The slideshow handles its own keys; only rescue them when focus fell back to the page.
+        if (value && (document.activeElement === document.body || !document.activeElement)) {
+          event.preventDefault(); slideshow.focus(); latestCommand.current(value);
+        }
+        return;
+      }
+      if (isEditing(event.target)) return;
+      if (!value) return;
+      event.preventDefault();
+      latestCommand.current(value);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -71,18 +131,43 @@ export function App() {
 
   useEffect(() => {
     if (slide) return;
-    if (loading) {
-      if (!main.current?.contains(document.activeElement))
-        (main.current?.querySelector<HTMLButtonElement>('main button:not(:disabled)') ?? main.current)?.focus();
+    const root = main.current;
+    if (!root) return;
+    if (onHome) {
+      // The home screen is ambient: no focus ring until the first key press, except when
+      // returning from an album, where focus goes back to the button that opened it.
+      if (!activity.active) { handledRow.current = rowRequest; if (document.activeElement !== root) root.focus(); return; }
+      if (handledRow.current !== rowRequest) {
+        handledRow.current = rowRequest;
+        root.querySelector<HTMLButtonElement>('.album-row button, [data-album="__all"]')?.focus();
+        return;
+      }
+      if (restoreOnHome.current) {
+        const buttons = [...root.querySelectorAll<HTMLButtonElement>('[data-album]')];
+        const target = buttons.find(button => button.dataset.album === albumFocus.current) ?? buttons.find(button => button.dataset.album === '__all');
+        if (target) { target.focus(); restoreOnHome.current = false; return; }
+        if (!loading) restoreOnHome.current = false;
+      }
+      if (!root.contains(document.activeElement)) root.focus();
       return;
     }
-    {
-      if (returnFocus.current?.isConnected) { returnFocus.current.focus(); returnFocus.current = null; return; }
-      const restored = !album && albumFocus.current
-        ? [...main.current!.querySelectorAll<HTMLButtonElement>('[data-album]')].find(button => button.dataset.album === albumFocus.current) : null;
-      (restored ?? main.current?.querySelector<HTMLButtonElement>('main button:not(:disabled), .pairing button:not(:disabled)') ?? main.current)?.focus();
+    if (loading) {
+      if (!root.contains(document.activeElement))
+        (root.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? root).focus();
+      return;
     }
-  }, [loading, slide]);
+    if (returnFocus.current?.isConnected) { returnFocus.current.focus(); returnFocus.current = null; return; }
+    const restored = !album && albumFocus.current
+      ? [...root.querySelectorAll<HTMLButtonElement>('[data-album]')].find(button => button.dataset.album === albumFocus.current) : null;
+    (restored ?? root.querySelector<HTMLButtonElement>('[role="alert"] button') ?? root.querySelector<HTMLButtonElement>('button:not(:disabled)') ?? root).focus();
+  }, [loading, slide, onHome, album, activity.active, rowRequest]);
+
+  // The home screen has no error panel, so a failed album list retries on its own (like photos and weather).
+  useEffect(() => {
+    if (!onHome || !error) return;
+    const timer = window.setTimeout(() => setReload(value => value + 1), 15_000);
+    return () => window.clearTimeout(timer);
+  }, [onHome, error]);
 
   const exit = useCallback(() => {
     setSlide(null);
@@ -97,54 +182,33 @@ export function App() {
       void document.documentElement.requestFullscreen().catch(() => {});
   }
 
-  return <>
-    <div className="dashboard" hidden={slide !== null} tabIndex={-1} ref={main} inert={slide !== null} onKeyDown={event => {
-      if (isEditing(event.target)) return;
-      const keys: Record<string, Command> = { ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right', Enter: 'Select', ' ': 'Select', Escape: 'Back', Backspace: 'Back', Home: 'Home' };
-      if (keys[event.key]) { event.preventDefault(); command(keys[event.key]); }
-    }}>
-      <header>
-        <a className="wordmark" href="/" tabIndex={-1}>still<span> / </span>home</a>
-        <div className="header-meta">
-          <span className="header-label">YOUR HOME DASHBOARD</span>
-          <span className="header-end"><svg className="wifi-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 8.8a15.8 15.8 0 0 1 20 0M5.5 12.4a10.3 10.3 0 0 1 13 0M9 16a4.8 4.8 0 0 1 6 0M12 20h.01" /></svg>Connected</span>
-        </div>
-      </header>
-      <main>
-        <div className="eyebrow">{album ? 'THE COLLECTION' : 'YOUR HOME, ON THE BIG SCREEN'}</div>
-        <div className="heading-row"><div><h1>{album?.name ?? 'A little of everything. All in one place.'}</h1><p className="subtitle">{album ? `${photos.length} photos${loading ? ' · still loading' : ''} · Find a favorite, or let them play.` : 'Photos, local weather, and the things that make your home yours.'}</p></div>
-          {album && <div className="actions"><button onClick={() => setAlbum(null)}>← Albums</button><button className="primary" disabled={!photos.length || loading || !!error} onClick={() => open(photos[0])}>▶ Play album</button></div>}
-        </div>
-        {!album ? <div className="dashboard-layout">
-          <section className="collection-panel" aria-labelledby="collection-title">
-            <div className="section-label"><h2 id="collection-title">Albums</h2><span>{albums.length} COLLECTIONS</span></div>
-            {error && <div className="notice" role="alert"><h3>We couldn’t load this collection</h3><p>{error}</p><button onClick={() => setReload(value => value + 1)}>Try again</button></div>}
+  const retry = <button onClick={() => setReload(value => value + 1)}>Try again</button>;
+  return <WeatherProvider><Stage>
+    <div className="dashboard" hidden={slide !== null} tabIndex={-1} ref={main} inert={slide !== null}>
+      {onHome ? <Home albums={albums} remote={remote} expanded={activity.active} onOpenAlbum={openAlbum}
+        onAllAlbums={() => { albumFocus.current = null; setView('albums'); }} />
+        : <main className="legacy">
+          <div className="heading-row"><div><h1>{album?.name ?? 'All albums'}</h1>
+            <p className="subtitle">{album ? `${photos.length} photos${loading ? ' · still loading' : ''}` : `${albums.length} albums`}</p></div>
+            <div className="actions"><button onClick={back}>← Back</button>
+              {album && <button className="primary" disabled={!photos.length || loading || !!error} onClick={() => open(photos[0])}>▶ Play album</button>}</div>
+          </div>
+          {error && <div className="notice" role="alert"><h3>We couldn’t load this collection</h3><p>{error}</p>{retry}</div>}
+          {!album ? <>
             {loading && <p role="status" className="loading">Opening your collections…</p>}
             {!loading && !error && albums.length === 0 && <div className="notice"><h3>No accessible albums yet</h3><p>Albums owned by or shared with the configured Immich account will appear here.</p></div>}
-            <div className="album-grid">{albums.map((item, index) => <AlbumCard key={item.id} item={item} index={index} onSelect={() => { albumFocus.current = item.id; setAlbum(item); }} />)}</div>
-          </section>
-          <WeatherPanel />
-        </div> : <>
-          <div className="section-label"><h2>All photos</h2><span>CHOOSE A PHOTO TO BEGIN</span></div>
-          {error && <div className="notice" role="alert"><h3>We couldn’t load this collection</h3><p>{error}</p><button onClick={() => setReload(value => value + 1)}>Try again</button></div>}
-          {loading && <p role="status" className="loading">Gathering your photos…</p>}
-          {!loading && !error && photos.length === 0 && <div className="notice"><h3>No photos here yet</h3><p>This album has no available photos. Choose another album.</p></div>}
-          <div className="photo-grid">{photos.slice(0, visible).map(photo => <button className="photo-card" key={photo.id} disabled={loading || !!error} onClick={() => open(photo)} aria-label={`Open ${photo.name}`}>
-            <img src={imageUrl(album.id, photo.id)} alt="" loading="lazy" onError={event => { event.currentTarget.classList.add('image-failed'); }} />
-            <span>{photo.name}</span>
-          </button>)}</div>
-          {visible < photos.length && <button className="load-more" onClick={() => setVisible(value => value + 60)}>Show more photos ({photos.length - visible} remaining)</button>}
-        </>}
-      </main>
-      <section className="pairing" aria-label="Phone pairing">
-        <div><span aria-live="polite">Phone remote: {remote.status}</span>
-          {remote.code && <p>Open <strong>/remote</strong> on your phone and enter <strong className="pair-code">{remote.code}</strong><br />Code expires in two minutes.</p>}
-        </div>
-        <button disabled={!remote.ready} onClick={() => remote.send({ type: 'code' })}>{remote.code ? 'New pairing code' : 'Pair phone'}</button>
-        {remote.paired && <button onClick={() => remote.send({ type: 'unpair' })}>Unpair phone</button>}
-      </section>
-      <footer><span><kbd>↑ ↓ ← →</kbd> Navigate <kbd>Enter</kbd> Select <kbd>Esc</kbd> Back</span><span>MAKE YOURSELF AT HOME</span></footer>
+            <div className="album-grid">{albums.map((item, index) => <AlbumCard key={item.id} item={item} index={index} onSelect={() => openAlbum(item)} />)}</div>
+          </> : <>
+            {loading && <p role="status" className="loading">Gathering your photos…</p>}
+            {!loading && !error && photos.length === 0 && <div className="notice"><h3>No photos here yet</h3><p>This album has no available photos. Choose another album.</p></div>}
+            <div className="photo-grid">{photos.slice(0, visible).map(photo => <button className="photo-card" key={photo.id} disabled={loading || !!error} onClick={() => open(photo)} aria-label={`Open ${photo.name}`}>
+              <img src={imageUrl(album.id, photo.id)} alt="" loading="lazy" onError={event => { event.currentTarget.classList.add('image-failed'); }} />
+              <span>{photo.name}</span>
+            </button>)}</div>
+            {visible < photos.length && <button className="load-more" onClick={() => setVisible(value => value + 60)}>Show more photos ({photos.length - visible} remaining)</button>}
+          </>}
+        </main>}
     </div>
     {slide && album && <Slideshow album={album.id} photos={photos} initialId={slide} onExit={exit} onHome={home} />}
-  </>;
+  </Stage></WeatherProvider>;
 }

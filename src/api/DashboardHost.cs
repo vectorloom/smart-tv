@@ -45,15 +45,20 @@ public static class DashboardHost
         builder.Services.AddHttpClient("immich", client => client.Timeout = TimeSpan.FromSeconds(30))
             .ConfigurePrimaryHttpMessageHandler(targets.Handler);
         builder.Services.AddHttpClient("weather", client => client.Timeout = TimeSpan.FromSeconds(15));
+        var weatherSnapshot = config["Weather:CacheFile"] is { Length: > 0 } file ? file : Path.Combine(Path.GetTempPath(), "smart-tv-weather.json");
         builder.Services.AddSingleton(sp => new WeatherForecastService(
             sp.GetRequiredService<IHttpClientFactory>().CreateClient("weather"),
-            weatherOptions, sp.GetRequiredService<TimeProvider>()));
+            weatherOptions, sp.GetRequiredService<TimeProvider>(), weatherSnapshot,
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<WeatherForecastService>()));
         builder.Services.AddScoped(sp => {
             var settings = sp.GetRequiredService<SettingsStore>().Snapshot();
             targets.Require(settings.BaseUrl.AbsoluteUri);
             return new ImmichClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("immich"), settings);
         });
         builder.Services.AddScoped<SettingsManager>();
+        builder.Services.AddSingleton(new ImageCache(config.GetValue("ImageCache:LimitMegabytes", 200L) * 1024 * 1024));
+        builder.Services.AddSingleton(sp => new SlideshowService(sp.GetRequiredService<IServiceScopeFactory>(),
+            sp.GetRequiredService<ImageCache>(), sp.GetRequiredService<TimeProvider>()));
         builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.None);
         builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
         // Framework antiforgery failures must not include submitted payloads in logs.
@@ -101,8 +106,10 @@ public static class DashboardHost
                 Results.Ok(await weather.GetRegionalWind(ct)));
             app.MapGet("/api/albums", (ImmichClient client, CancellationToken ct) => client.Albums(ct));
             app.MapGet("/api/albums/{album:guid}/photos", (Guid album, int? page, ImmichClient client, CancellationToken ct) => client.Photos(album, page ?? 1, ct));
-            app.MapGet("/api/albums/{album:guid}/photos/{asset:guid}/image", async (Guid album, Guid asset, string? size, ImmichClient client, HttpContext context, CancellationToken ct) => {
-                var media = await client.Image(album, asset, size ?? "thumbnail", ct);
+            app.MapGet("/api/slideshow/next", async (SlideshowService slideshow, CancellationToken ct) =>
+                await slideshow.Next(ct) is { } photo ? Results.Ok(photo) : Results.NoContent());
+            app.MapGet("/api/albums/{album:guid}/photos/{asset:guid}/image", async (Guid album, Guid asset, string? size, ImmichClient client, ImageCache cache, HttpContext context, CancellationToken ct) => {
+                var media = await cache.Get(client, album, asset, size ?? "thumbnail", ct);
                 context.Response.Headers.CacheControl = "private, max-age=60";
                 return Results.File(media.Bytes, media.ContentType);
             });

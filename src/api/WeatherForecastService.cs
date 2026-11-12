@@ -39,13 +39,24 @@ public sealed record WindGridPoint(double Latitude, double Longitude, double Win
 public sealed record RegionalWind(
     string Location, DateTimeOffset LastUpdated, bool Stale, string ValidTime, WindGridPoint[] Points);
 
-public sealed class WeatherForecastService(HttpClient http, WeatherOptions options, TimeProvider clock)
+/// <summary>
+/// Open-Meteo forecast with a 20-minute cache. When the provider fails, the last good forecast is
+/// served with <c>Stale = true</c> and its original <c>LastUpdated</c>. The last good forecast is
+/// also written to <paramref name="snapshotFile"/> (if set) so a restarted API can serve it before
+/// the provider answers again. Snapshots older than a day are ignored.
+/// </summary>
+public sealed class WeatherForecastService(HttpClient http, WeatherOptions options, TimeProvider clock,
+    string? snapshotFile = null, ILogger? logger = null)
 {
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(20);
     private static readonly TimeSpan WindCacheDuration = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan FailureRetryDelay = TimeSpan.FromMinutes(1);
+    // With nothing to serve, retry the provider sooner so a cold start recovers quickly.
+    private static readonly TimeSpan ColdFailureRetryDelay = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan SnapshotMaxAge = TimeSpan.FromDays(1);
+    private static readonly JsonSerializerOptions SnapshotJson = new(JsonSerializerDefaults.Web);
     private readonly SemaphoreSlim gate = new(1, 1);
-    private WeatherForecast? cached;
+    private WeatherForecast? cached = LoadSnapshot(snapshotFile, options, clock);
     private RegionalWind? cachedWind;
     private DateTimeOffset retryAfter;
     private DateTimeOffset windRetryAfter;
@@ -71,12 +82,15 @@ public sealed class WeatherForecastService(HttpClient http, WeatherOptions optio
                 var result = await Fetch(ct);
                 cached = result with { LastUpdated = clock.GetUtcNow(), Stale = false };
                 retryAfter = DateTimeOffset.MinValue;
+                SaveSnapshot(cached);
                 return cached;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception)
+            catch (Exception error)
             {
-                retryAfter = clock.GetUtcNow().Add(FailureRetryDelay);
+                retryAfter = clock.GetUtcNow().Add(cached is null ? ColdFailureRetryDelay : FailureRetryDelay);
+                logger?.LogWarning("Open-Meteo forecast failed ({Error}: {Message}); {Fallback}.", error.GetType().Name, error.Message,
+                    cached is { } last ? $"serving forecast from {last.LastUpdated:u}" : "no cached forecast to serve");
                 if (cached is { } stale) return stale with { Stale = true };
                 throw Unavailable();
             }
@@ -106,8 +120,9 @@ public sealed class WeatherForecastService(HttpClient http, WeatherOptions optio
                 return cachedWind;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception)
+            catch (Exception error)
             {
+                logger?.LogWarning("Open-Meteo wind grid failed ({Error}: {Message}).", error.GetType().Name, error.Message);
                 windRetryAfter = clock.GetUtcNow().Add(TimeSpan.FromMinutes(1));
                 if (cachedWind is { } stale) return stale with { Stale = true };
                 throw Unavailable();
@@ -170,6 +185,35 @@ public sealed class WeatherForecastService(HttpClient http, WeatherOptions optio
             i < dailyPrecip.Length ? dailyPrecip[i] : null)).ToArray();
         if (hourlyItems.Length == 0 || days.Length != 7) throw new JsonException("Weather forecast is incomplete.");
         return new(options.Location, clock.GetUtcNow(), false, currentWeather, hourlyItems, days);
+    }
+
+    private static WeatherForecast? LoadSnapshot(string? file, WeatherOptions options, TimeProvider clock)
+    {
+        if (string.IsNullOrEmpty(file) || !File.Exists(file)) return null;
+        try
+        {
+            var snapshot = JsonSerializer.Deserialize<WeatherForecast>(File.ReadAllText(file), SnapshotJson);
+            // A snapshot from another location or more than a day old would mislead more than help.
+            if (snapshot is null || snapshot.Location != options.Location || snapshot.Hourly is not { Length: > 0 } ||
+                snapshot.Daily is not { Length: 7 } || clock.GetUtcNow() - snapshot.LastUpdated > SnapshotMaxAge) return null;
+            return snapshot with { Stale = true };
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException) { return null; }
+    }
+
+    private void SaveSnapshot(WeatherForecast forecast)
+    {
+        if (string.IsNullOrEmpty(snapshotFile)) return;
+        try
+        {
+            var temporary = snapshotFile + ".tmp";
+            File.WriteAllText(temporary, JsonSerializer.Serialize(forecast, SnapshotJson));
+            File.Move(temporary, snapshotFile, overwrite: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            logger?.LogWarning("Could not save the weather snapshot ({Error}).", error.GetType().Name);
+        }
     }
 
     private const int GridSide = 5;

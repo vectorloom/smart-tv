@@ -49,6 +49,9 @@ test('HTTPS administrator settings, migration, selection, replacement rollback, 
     await admin.getByRole('button', { name: 'Validate and save', exact: true }).click();
     await expect(admin.getByRole('status', { name: '', exact: true })).toContainText('Settings saved');
     await page.goto(publicOrigin);
+    // Album buttons appear on the TV home screen after the first key press.
+    await expect(page.getByRole('button', { name: /All albums/ })).toBeVisible();
+    await page.keyboard.press('ArrowRight');
     await expect(page.getByRole('button', { name: /Shared holiday/ })).toBeVisible();
     await expect(page.getByRole('button', { name: /My album/ })).toBeVisible();
     await admin.getByLabel('New or replacement API key').fill('synthetic-invalid-key');
@@ -56,7 +59,8 @@ test('HTTPS administrator settings, migration, selection, replacement rollback, 
     await expect(admin.getByRole('status', { name: '', exact: true })).toContainText('Immich denied access');
     await expect(admin.getByLabel('Saved API key identifier')).toHaveText('synt' + '•'.repeat(13) + '-key');
     await expect(admin.getByLabel('New or replacement API key')).toHaveValue('');
-    await page.reload(); await expect(page.getByRole('button', { name: /Shared holiday/ })).toBeVisible();
+    await page.reload(); await expect(page.getByRole('button', { name: /All albums/ })).toBeVisible();
+    await page.keyboard.press('ArrowRight'); await expect(page.getByRole('button', { name: /Shared holiday/ })).toBeVisible();
     await admin.getByLabel('New or replacement API key').fill('synthetic-browser-replacement');
     await admin.getByRole('button', { name: 'Validate and save', exact: true }).click();
     await expect(admin.getByRole('status', { name: '', exact: true })).toContainText('Settings saved');

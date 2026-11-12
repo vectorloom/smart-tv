@@ -23,7 +23,7 @@ public class ImmichClientTests
     { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
 
     private static object Asset(Guid? id = null, string type = "IMAGE", bool trashed = false) =>
-        new { id = id ?? AssetId, type, isTrashed = trashed, originalFileName = "photo.jpg" };
+        new { id = id ?? AssetId, type, isTrashed = trashed, originalFileName = "photo.jpg", localDateTime = "2023-07-04T19:30:00.000Z" };
     private static object Search(object[] items, string? next = null) => new { assets = new { items, nextPage = next } };
 
     [Fact]
@@ -102,7 +102,9 @@ public class ImmichClientTests
             return Json(Search([Asset(), Asset(Other, "VIDEO"), Asset(Other, trashed: true)], "3"));
         });
         var page = await client.Photos(AlbumId, 2, Ct);
-        Assert.Equal(AssetId, Assert.Single(page.Items).Id);
+        var photo = Assert.Single(page.Items);
+        Assert.Equal(AssetId, photo.Id);
+        Assert.Equal("2023-07-04T19:30:00.000Z", photo.TakenAt);
         Assert.Equal(3, page.NextPage);
     }
 
