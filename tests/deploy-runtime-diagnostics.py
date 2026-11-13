@@ -38,7 +38,7 @@ def fixtures(case):
         ],
     }}}
     inspect = {"Config": {"Image": "smart-tv-dashboard", "Env": [
-        "ASPNETCORE_URLS=http://+:8080", f"Secret__Token={SECRET}",
+        "ASPNETCORE_URLS=http://+:8080", f"Secret__Token={SECRET}", "DOTNET_VERSION=10.0.0",
     ]}, "Image": CURRENT_IMAGE_ID, "Mounts": [
         {"Type": "volume", "Name": "smart-tv_settings", "Destination": "/app/state", "RW": False},
         {"Type": "bind", "Name": "", "Source": "/private/material/wrapping.crt", "Destination": "/run/settings-secrets/wrapping.crt", "RW": False},
@@ -74,18 +74,27 @@ import json, os, sys
 if sys.argv[1:2] == ['inspect']:
     print(json.dumps([json.load(open(os.environ['MOCK_INSPECT']))]))
 elif sys.argv[1:3] == ['image', 'inspect']:
-    print(json.dumps([json.load(open(os.environ['MOCK_IMAGE_CONFIG']))]))
+    key = 'MOCK_OLD_IMAGE_CONFIG' if sys.argv[3] == os.environ['OLD_IMAGE_ID'] else 'MOCK_IMAGE_CONFIG'
+    print(json.dumps([json.load(open(os.environ[key]))]))
 else: sys.exit(2)
 """)
         docker.chmod(0o755)
         inspect_path = temp / "inspect.json"
         inspect_path.write_text(json.dumps(inspect))
         image_config_path = temp / "image.json"
-        image_config_path.write_text(json.dumps({"Id": image_id, "Config": {"Env": []}}))
+        new_env = ["Remote__SessionFile=/app/data/remote-sessions.json", "DOTNET_VERSION=10.0.1"] if case == "new-image-env" else []
+        image_config_path.write_text(json.dumps({"Id": image_id, "Config": {"Env": new_env}}))
+        old_env = ["DOTNET_VERSION=10.0.0"]
+        if case == "old-image-env-drift":
+            old_env = ["DOTNET_VERSION=9.9.9"]
+        old_image_config_path = temp / "old-image.json"
+        old_image_config_path.write_text(json.dumps({"Id": CURRENT_IMAGE_ID, "Config": {"Env": old_env}}))
         env = os.environ | {
             "PATH": f"{temporary}:{os.environ['PATH']}",
             "MOCK_INSPECT": str(inspect_path),
             "MOCK_IMAGE_CONFIG": str(image_config_path),
+            "MOCK_OLD_IMAGE_CONFIG": str(old_image_config_path),
+            "OLD_IMAGE_ID": CURRENT_IMAGE_ID,
             "NEW_IMAGE_REF": NEW_IMAGE_REF,
             "NEW_IMAGE_ID": NEW_IMAGE_ID,
             "EXPECTED_BIND_ADDRESS": "10.0.0.11",
@@ -96,6 +105,12 @@ else: sys.exit(2)
 
 good = run()
 assert good.returncode == 0 and not good.stderr, good.stderr
+# A new image may add or change its own ENV defaults (new settings, base-image bumps).
+new_env = run("new-image-env")
+assert new_env.returncode == 0 and not new_env.stderr, new_env.stderr
+# The running container must still match the previous image ENV plus Compose.
+drift = run("old-image-env-drift")
+assert drift.returncode != 0 and "mismatched names=['DOTNET_VERSION']" in drift.stderr, drift.stderr
 for case, diagnostic in [
     ("image-reference", "[image identity]: effective Compose image reference"),
     ("image-id", "[image identity]: effective Compose image ID differs"),

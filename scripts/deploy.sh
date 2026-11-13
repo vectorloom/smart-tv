@@ -238,7 +238,7 @@ cleanup() { rm -f -- "$override" "$log"; }
 trap cleanup EXIT
 write_override() { printf 'services:\n  dashboard:\n    image: "%s"\n' "$1" >"$override"; chmod 600 "$override"; }
 write_override "$new_ref"
-if ! compose -f "$override" config --format json 2>/dev/null | NEW_IMAGE_REF="$new_ref" NEW_IMAGE_ID="$new_id" EXPECTED_BIND_ADDRESS="$bind_address" python3 -c '
+if ! compose -f "$override" config --format json 2>/dev/null | NEW_IMAGE_REF="$new_ref" NEW_IMAGE_ID="$new_id" OLD_IMAGE_ID="$old_id" EXPECTED_BIND_ADDRESS="$bind_address" python3 -c '
 import json, os, sys
 try:
     config=json.load(sys.stdin); service=config["services"]["dashboard"]
@@ -261,7 +261,10 @@ try:
         mismatch("image identity", "effective Compose image ID differs from the transferred image ID")
     desired={str(k):str(v) for k,v in service.get("environment",{}).items()}
     current=dict(item.split("=",1) for item in inspect["Config"].get("Env",[]) if "=" in item)
-    image_config=json.loads(__import__("subprocess").check_output(["docker","image","inspect",os.environ["NEW_IMAGE_ID"]],text=True))[0]
+    # The running container must still be exactly the previous image ENV plus the
+    # Compose environment (nothing changed or injected since preflight). The new
+    # image may add or change its own ENV defaults; those are not compared.
+    image_config=json.loads(__import__("subprocess").check_output(["docker","image","inspect",os.environ["OLD_IMAGE_ID"]],text=True))[0]
     expected=dict(item.split("=",1) for item in image_config["Config"].get("Env",[]) if "=" in item); expected.update(desired)
     missing=sorted(expected.keys()-current.keys())
     extra=sorted(current.keys()-expected.keys())
@@ -367,5 +370,10 @@ REMOTE_DEPLOY
 then
   exit 0
 else
+  status=$?
+  # Remote exit codes 60-67 are raised before the dashboard is recreated.
+  if ((status >= 60 && status <= 67)); then
+    die "remote deployment checks failed (exit $status); the dashboard was not changed. The transferred $image_ref stays loaded, so deploy a new commit after fixing the cause"
+  fi
   die "deployment or rollback failed; inspect production health at $HEALTH_URL"
 fi
