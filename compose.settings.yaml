@@ -7,6 +7,9 @@ services:
       Settings__WrappingKey: /run/settings-secrets/wrapping.key
       Immich__Targets: ${SMART_TV_IMMICH_TARGETS:-http://host.docker.internal:2283/api/}
       Immich__AllowedAddresses: ${SMART_TV_IMMICH_ADDRESSES:?Set the exact approved Immich IP addresses}
+      # Empty disables Home Assistant; the token itself lives only in the encrypted settings volume.
+      HomeAssistant__Targets: ${SMART_TV_HA_TARGETS:-}
+      HomeAssistant__AllowedAddresses: ${SMART_TV_HA_ADDRESSES:-}
     volumes:
       - settings:/app/state:ro
       - type: bind
@@ -38,6 +41,8 @@ services:
       Immich__AlbumIds: ${IMMICH_ALBUM_IDS:-}
       Immich__Targets: ${SMART_TV_IMMICH_TARGETS:-http://host.docker.internal:2283/api/}
       Immich__AllowedAddresses: ${SMART_TV_IMMICH_ADDRESSES:?Set the exact approved Immich IP addresses}
+      HomeAssistant__Targets: ${SMART_TV_HA_TARGETS:-}
+      HomeAssistant__AllowedAddresses: ${SMART_TV_HA_ADDRESSES:-}
     extra_hosts:
       - "host.docker.internal:127.0.0.1"
     volumes:

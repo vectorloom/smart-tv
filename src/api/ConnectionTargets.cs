@@ -4,14 +4,16 @@ using System.Net.Sockets;
 namespace SmartTv;
 
 // The browser cannot add a target or an approved IP. Deployment owns both lists.
-public sealed class ConnectionTargets
+public class ConnectionTargets
 {
     public Uri[] Targets { get; }
+    public string Service { get; }
     private readonly HashSet<IPAddress> addresses;
     public bool HasPinnedAddresses => addresses.Count > 0;
-    public ConnectionTargets(IEnumerable<string> targets, IEnumerable<string> approvedAddresses)
+    public ConnectionTargets(IEnumerable<string> targets, IEnumerable<string> approvedAddresses, string service = "Immich")
     {
-        Targets = targets.Select(Parse).Distinct().ToArray();
+        Service = service;
+        Targets = targets.Select(t => Parse(t, service)).Distinct().ToArray();
         addresses = approvedAddresses.Select(IPAddress.Parse).Select(Normalize).ToHashSet();
         if (addresses.Any(Forbidden)) throw new InvalidOperationException("An approved destination address is unsafe.");
     }
@@ -22,18 +24,18 @@ public sealed class ConnectionTargets
         return address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any) || address.IsIPv6LinkLocal || address.IsIPv6Multicast ||
             (address.AddressFamily == AddressFamily.InterNetwork && (bytes[0] == 0 || bytes[0] >= 224 || (bytes[0] == 169 && bytes[1] == 254)));
     }
-    public static Uri Parse(string text)
+    public static Uri Parse(string text, string service = "Immich")
     {
         if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") ||
             uri.UserInfo != "" || uri.Query != "" || uri.Fragment != "" || uri.AbsolutePath != "/api/" ||
             text.Contains('%') || text.Contains('\\') || text.Contains("/../") || text.Contains("/./"))
-            throw new DashboardException(400, "Choose an approved Immich API destination ending in /api/.");
+            throw new DashboardException(400, $"Choose an approved {service} API destination ending in /api/.");
         return uri;
     }
     public Uri Require(string url)
     {
-        var uri = Parse(url);
-        if (!Targets.Contains(uri)) throw new DashboardException(400, "Immich destination is not deployment-approved.");
+        var uri = Parse(url, Service);
+        if (!Targets.Contains(uri)) throw new DashboardException(400, $"{Service} destination is not deployment-approved.");
         return uri;
     }
     public async ValueTask<Stream> Connect(SocketsHttpConnectionContext context, CancellationToken ct)
@@ -50,10 +52,14 @@ public sealed class ConnectionTargets
             catch (SocketException) { socket.Dispose(); }
             catch { socket.Dispose(); throw; }
         }
-        throw new HttpRequestException("No approved Immich address was reachable.");
+        throw new HttpRequestException($"No approved {Service} address was reachable.");
     }
     public SocketsHttpHandler Handler() => new() {
         AllowAutoRedirect = false, UseCookies = false, UseProxy = false,
         ConnectCallback = Connect, ConnectTimeout = TimeSpan.FromSeconds(5), PooledConnectionLifetime = TimeSpan.FromMinutes(2)
     };
 }
+
+/// <summary>Home Assistant's own deployment-approved destinations and pinned IPs (HomeAssistant:Targets / :AllowedAddresses).</summary>
+public sealed class HomeAssistantTargets(IEnumerable<string> targets, IEnumerable<string> approvedAddresses)
+    : ConnectionTargets(targets, approvedAddresses, "Home Assistant");

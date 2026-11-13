@@ -288,3 +288,42 @@ replacement/recovery workflow remains usable. The replacement input stays blank.
 Successful saves update the identifier immediately; rejected validation retains
 the previous identifier and configuration. This metadata is returned only by
 administrator-authorized settings routes and never by the TV or phone remote.
+
+## Home Assistant
+
+The TV's Home automation screen shows the lights and switches you select (OK on the
+remote toggles them) and climate devices (shown read-only). The TV process keeps one
+WebSocket open to Home Assistant, subscribed to the selected entities only, and pushes
+each change to TV browsers as Server-Sent Events (`/api/home/events`). The token never
+leaves the server.
+
+**Destination.** Like Immich, the destination is deployment-owned:
+`SMART_TV_HA_TARGETS` (semicolon-separated URLs ending in `/api/`, e.g.
+`http://10.0.0.11:8123/api/`) and `SMART_TV_HA_ADDRESSES` (exact IPs). Both are empty by
+default, which disables the feature. The WebSocket goes through the same pinned-IP
+connector as Immich: no redirects, no proxy, no second DNS lookup.
+
+**Token.** In Home Assistant, create a dedicated **non-administrator** user, sign in as
+it, and create a long-lived access token (Profile → Security). On the administrator
+page, enter it under *Home Assistant* and choose *Validate and save* (it checks the
+token, requires Home Assistant 2024.1 or newer, and keeps the previous settings on any
+failure). Then choose devices and save again. The token is stored encrypted in
+`home-assistant.json` in the settings volume, under the same wrapping certificate as the
+Immich key but a separate protection purpose. The page only ever shows a masked
+identifier. The TV notices a save within 10 seconds.
+
+Home Assistant cannot limit which services a token may call, so the dashboard limits
+them instead: the TV can only call `light.toggle` / `switch.toggle` on the selected
+entities, at most 20 changes per 10 seconds.
+
+**Who can toggle.** Anyone who can open the TV dashboard on the LAN can toggle the selected
+lights and switches (an accepted design decision). The toggle endpoint refuses
+what a foreign web page could send: it requires a JSON body (forcing a CORS preflight,
+and no CORS is enabled), rejects cross-site `Origin` / `Sec-Fetch-Site`, and accepts only
+IP-literal, single-label, `localhost`, `.local`, `.lan`, `.home.arpa` or `.internal` hosts,
+so a DNS-rebinding domain is refused. If the TV opens the dashboard by another
+name, add it to `HomeAssistant__AllowedHosts` (semicolon-separated).
+
+**Recovery.** `recover-wrapping` also clears the Home Assistant token (the URL and device
+selection are kept); enter a new token afterwards. If the token is revoked, the TV shows
+"Home Assistant rejected the access token" and stops retrying until a new one is saved.

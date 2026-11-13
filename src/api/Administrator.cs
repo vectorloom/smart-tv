@@ -131,6 +131,10 @@ public static class AdministratorEndpoints
         admin.MapGet("/settings", (SettingsStore store, ConnectionTargets targets) => Results.Ok(new { settings = store.View(), targets = targets.Targets.Select(t => t.AbsoluteUri) }));
         admin.MapPut("/settings", (SaveSettingsRequest request, SettingsManager manager, CancellationToken ct) => manager.Save(request, ct));
         admin.MapPost("/import", (ImportSettingsRequest request, SettingsManager manager, CancellationToken ct) => manager.Import(request.Revision, ct));
+        admin.MapGet("/home-assistant", (SettingsStore store, HomeAssistantTargets targets) =>
+            Results.Ok(new { settings = store.HomeAssistantView(), targets = targets.Targets.Select(t => t.AbsoluteUri) }));
+        admin.MapPut("/home-assistant", (SaveHomeAssistantRequest request, HomeAssistantManager manager, CancellationToken ct) => manager.Save(request, ct));
+        admin.MapGet("/home-assistant/entities", (HomeAssistantManager manager, CancellationToken ct) => manager.Entities(ct));
         admin.MapGet("/albums", (SettingsManager manager, CancellationToken ct) => manager.Albums(ct));
         admin.MapGet("/albums/{album:guid}/thumbnail", async (Guid album, SettingsManager manager, CancellationToken ct) => {
             var media = await manager.Thumbnail(album, ct); return Results.File(media.Bytes, media.ContentType);

@@ -7,6 +7,9 @@ namespace SmartTv;
 
 public sealed record StoredSettings(int Format, Guid Revision, Guid ProtectionGeneration, string BaseUrl, Guid[] AlbumIds, string? ProtectedKey);
 public sealed record SettingsView(string Revision, string Source, string BaseUrl, Guid[] AlbumIds, bool KeyConfigured, string? MaskedKey);
+public sealed record StoredHomeAssistant(int Format, Guid Revision, Guid ProtectionGeneration, string BaseUrl, string[] EntityIds, string? ProtectedToken);
+/// <summary>What the administrator page may see: never the token, only whether one is saved and its masked form.</summary>
+public sealed record HomeAssistantView(string Revision, bool Configured, string BaseUrl, string[] EntityIds, bool TokenConfigured, string? MaskedToken);
 
 public static class PrivateFiles
 {
@@ -51,7 +54,10 @@ public sealed class SettingsStore(string? directory, ImmichSettings environment,
 {
     private readonly object gate = new();
     private X509Certificate2? wrappingCertificate;
-    private readonly Dictionary<(Guid, bool), IDataProtector> protectors = [];
+    private readonly Dictionary<(Guid, bool), IDataProtectionProvider> providers = [];
+    private const string ImmichPurpose = "Immich.ApiKey.v1";
+    // A separate purpose: an Immich ciphertext can never be unprotected as a Home Assistant token, or vice versa.
+    private const string HomeAssistantPurpose = "HomeAssistant.Token.v1";
     public ImmichSettings EnvironmentSettings => environment;
     public string? DirectoryPath => directory;
     private string PathName => Path.Combine(directory ?? throw new DashboardException(503, "Persistent settings are not enabled."), "settings.json");
@@ -63,11 +69,11 @@ public sealed class SettingsStore(string? directory, ImmichSettings environment,
             throw new JsonException();
         return doc;
     }
-    private IDataProtector Protector(Guid generation, bool create)
+    private IDataProtector Protector(Guid generation, bool create, string purpose = ImmichPurpose)
     {
         lock (gate)
         {
-            if (protectors.TryGetValue((generation, create), out var cached)) return cached;
+            if (providers.TryGetValue((generation, create), out var cached)) return cached.CreateProtector(purpose);
             if (certificatePath == null || keyPath == null) throw new CryptographicException();
             var certificate = wrappingCertificate ??= X509Certificate2.CreateFromPemFile(certificatePath, keyPath);
             var folder = Path.Combine(directory!, "keyring", generation.ToString("N"));
@@ -78,12 +84,12 @@ public sealed class SettingsStore(string? directory, ImmichSettings environment,
                 PrivateFiles.DirectoryFor(folder);
             }
             if (!Directory.Exists(folder)) throw new CryptographicException();
-            var protector = DataProtectionProvider.Create(new DirectoryInfo(folder), options => {
+            var provider = DataProtectionProvider.Create(new DirectoryInfo(folder), options => {
                 options.SetApplicationName("smart-tv-settings-v1").ProtectKeysWithCertificate(certificate);
                 if (!create) options.DisableAutomaticKeyGeneration();
-            }).CreateProtector("Immich.ApiKey.v1");
-            protectors[(generation, create)] = protector;
-            return protector;
+            });
+            providers[(generation, create)] = provider;
+            return provider.CreateProtector(purpose);
         }
     }
 
@@ -145,18 +151,88 @@ public sealed class SettingsStore(string? directory, ImmichSettings environment,
             catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException) { throw new DashboardException(503, "Could not securely persist settings. The previous configuration was retained."); }
         }
     }
-    // Offline, explicit CLI recovery. It deliberately never decrypts the lost key.
+    // Offline, explicit CLI recovery. It deliberately never decrypts the lost key or token: both are
+    // cleared and must be entered again; URLs, album and entity selections are kept.
     public void RecoverWrappingKey()
     {
         if (!writable) throw new InvalidOperationException();
         lock (gate)
         {
-            var doc = Read() ?? throw new DashboardException(400, "No persisted settings to recover.");
+            var doc = Read();
+            var assistant = ReadHomeAssistant();
+            if (doc == null && assistant == null) throw new DashboardException(400, "No persisted settings to recover.");
             // Verify new wrapping material can actually protect and unprotect first.
             var generation = Guid.NewGuid();
             var protector = Protector(generation, true);
             if (protector.Unprotect(protector.Protect("recovery-check")) != "recovery-check") throw new CryptographicException();
-            PrivateFiles.Json(PathName, doc with { Revision = Guid.NewGuid(), ProtectionGeneration = generation, ProtectedKey = null });
+            if (doc != null) PrivateFiles.Json(PathName, doc with { Revision = Guid.NewGuid(), ProtectionGeneration = generation, ProtectedKey = null });
+            if (assistant != null) PrivateFiles.Json(HomeAssistantPath, assistant with { Revision = Guid.NewGuid(), ProtectionGeneration = generation, ProtectedToken = null });
+        }
+    }
+
+    // ---- Home Assistant: its own atomically replaced document and revision, same wrapping material.
+    // There is no environment fallback: the token can only be entered on the administrator page.
+    public const int MaxEntities = 200;
+    private string HomeAssistantPath => Path.Combine(directory ?? throw new DashboardException(503, "Persistent settings are not enabled."), "home-assistant.json");
+    private StoredHomeAssistant? ReadHomeAssistant()
+    {
+        if (directory == null) return null;
+        var doc = PrivateFiles.Read<StoredHomeAssistant>(HomeAssistantPath);
+        if (doc != null && (doc.Format != 1 || doc.Revision == Guid.Empty || doc.ProtectionGeneration == Guid.Empty || doc.EntityIds == null ||
+            doc.EntityIds.Length > MaxEntities || !doc.EntityIds.All(HomeAssistantSettings.IsEntityId) || !Uri.TryCreate(doc.BaseUrl, UriKind.Absolute, out _)))
+            throw new JsonException();
+        return doc;
+    }
+    private static DashboardException HomeAssistantUnavailable() => new(503, "Stored Home Assistant settings are unavailable. Use the documented administrator recovery procedure.");
+    public HomeAssistantView HomeAssistantView()
+    {
+        try
+        {
+            var doc = ReadHomeAssistant();
+            if (doc == null) return new("none", false, "", [], false, null);
+            string? masked = null;
+            if (doc.ProtectedToken != null)
+                try { masked = MaskKey(Protector(doc.ProtectionGeneration, false, HomeAssistantPurpose).Unprotect(doc.ProtectedToken)); }
+                catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException or FormatException) { }
+            return new(doc.Revision.ToString(), true, doc.BaseUrl, doc.EntityIds, doc.ProtectedToken != null, masked);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { throw HomeAssistantUnavailable(); }
+    }
+    /// <summary>The revision alone, without decrypting anything: the TV process polls it to notice a save.</summary>
+    public string HomeAssistantRevision()
+    {
+        try { return ReadHomeAssistant()?.Revision.ToString() ?? "none"; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { throw HomeAssistantUnavailable(); }
+    }
+    /// <summary>Null when Home Assistant has never been configured.</summary>
+    public HomeAssistantSettings? HomeAssistantSnapshot()
+    {
+        try
+        {
+            var doc = ReadHomeAssistant();
+            if (doc == null) return null;
+            var token = doc.ProtectedToken == null ? "" : Protector(doc.ProtectionGeneration, false, HomeAssistantPurpose).Unprotect(doc.ProtectedToken);
+            return new(new Uri(doc.BaseUrl), token, doc.EntityIds, doc.Revision.ToString());
+        }
+        catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException or JsonException or FormatException) { throw HomeAssistantUnavailable(); }
+    }
+    public HomeAssistantView CommitHomeAssistant(HomeAssistantSettings candidate, string expectedRevision)
+    {
+        lock (gate)
+        {
+            if (!writable) throw new DashboardException(403, "Settings storage is read-only.");
+            if (HomeAssistantView().Revision != expectedRevision) throw new DashboardException(409, "Settings changed. Reload before saving.");
+            var generation = ReadHomeAssistant()?.ProtectionGeneration ?? Guid.NewGuid();
+            try
+            {
+                var protectedToken = string.IsNullOrEmpty(candidate.Token) ? null : Protector(generation, true, HomeAssistantPurpose).Protect(candidate.Token);
+                var ring = Path.Combine(directory!, "keyring", generation.ToString("N"));
+                if (!OperatingSystem.IsWindows() && Directory.Exists(ring))
+                    foreach (var file in Directory.GetFiles(ring)) File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                PrivateFiles.Json(HomeAssistantPath, new StoredHomeAssistant(1, Guid.NewGuid(), generation, candidate.BaseUrl.AbsoluteUri, candidate.EntityIds, protectedToken));
+                return HomeAssistantView();
+            }
+            catch (Exception ex) when (ex is CryptographicException or IOException or UnauthorizedAccessException) { throw new DashboardException(503, "Could not securely persist settings. The previous configuration was retained."); }
         }
     }
 }

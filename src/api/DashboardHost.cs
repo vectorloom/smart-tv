@@ -39,6 +39,11 @@ public static class DashboardHost
             (config["Immich:AllowedAddresses"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         if (directory != null && !targets.HasPinnedAddresses) throw new InvalidOperationException("Managed settings require deployment-approved destination IP addresses.");
         builder.Services.AddSingleton(targets);
+        static string[] List(string? value, char separator) => (value ?? "").Split(separator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var homeAssistantTargets = new HomeAssistantTargets(List(config["HomeAssistant:Targets"], ';'), List(config["HomeAssistant:AllowedAddresses"], ','));
+        if (homeAssistantTargets.Targets.Length > 0 && !homeAssistantTargets.HasPinnedAddresses)
+            throw new InvalidOperationException("Home Assistant targets require deployment-approved destination IP addresses.");
+        builder.Services.AddSingleton(homeAssistantTargets);
         builder.Services.AddSingleton(new SettingsStore(directory, environment, config["Settings:WrappingCertificate"], config["Settings:WrappingKey"], administrator));
         builder.Services.AddSingleton(TimeProvider.System);
         var remoteSessions = config["Remote:SessionFile"] is { Length: > 0 } sessionsFile ? sessionsFile : Path.Combine(Path.GetTempPath(), "smart-tv-remote-sessions.json");
@@ -58,6 +63,14 @@ public static class DashboardHost
             return new ImmichClient(sp.GetRequiredService<IHttpClientFactory>().CreateClient("immich"), settings);
         });
         builder.Services.AddScoped<SettingsManager>();
+        builder.Services.AddScoped<HomeAssistantManager>();
+        if (!administrator)
+        {
+            builder.Services.AddSingleton(sp => new HomeAssistantHub(sp.GetRequiredService<SettingsStore>(), homeAssistantTargets,
+                sp.GetRequiredService<ILoggerFactory>().CreateLogger<HomeAssistantHub>(), sp.GetService<HomeAssistantOptions>()));
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<HomeAssistantHub>());
+        }
+        var dashboardHosts = List(config["HomeAssistant:AllowedHosts"], ';').Select(h => h.ToLowerInvariant()).ToHashSet();
         builder.Services.AddSingleton(new ImageCache(config.GetValue("ImageCache:LimitMegabytes", 200L) * 1024 * 1024));
         builder.Services.AddSingleton(sp => new SlideshowService(sp.GetRequiredService<IServiceScopeFactory>(),
             sp.GetRequiredService<ImageCache>(), sp.GetRequiredService<TimeProvider>()));
@@ -104,6 +117,7 @@ public static class DashboardHost
             app.MapGet("/api/health", () => Results.Ok(new { status = "ok" }));
             app.MapGet("/api/weather", async (WeatherForecastService weather, CancellationToken ct) =>
                 Results.Ok(await weather.GetForecast(ct)));
+            HomeAssistantEndpoints.Map(app, dashboardHosts);
             app.MapGet("/api/weather/wind", async (WeatherForecastService weather, CancellationToken ct) =>
                 Results.Ok(await weather.GetRegionalWind(ct)));
             app.MapGet("/api/albums", (ImmichClient client, CancellationToken ct) => client.Albums(ct));

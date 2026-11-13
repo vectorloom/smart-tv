@@ -81,6 +81,13 @@ button:focus, select:focus, input:focus, a:focus-visible {
 .settings-album input { width: 24px; height: 24px; flex-shrink: 0; accent-color: var(--amber); }
 .settings-album img { width: 68px; height: 68px; border-radius: 8px; object-fit: cover; }
 .settings-album small { display: block; margin-top: 7px; color: var(--muted); font-size: 15px; }
+.settings-section { margin-top: 56px; padding-top: 32px; border-top: 1px solid var(--border); }
+.settings-section h2 { margin: 0; font-size: 32px; font-weight: 500; }
+.settings-devices { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 18px 0; }
+.settings-devices h3 { grid-column: 1 / -1; margin: 6px 0 0; font-size: 20px; font-weight: 500; }
+.settings-device { display: flex; align-items: center; gap: 13px; overflow-wrap: anywhere; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-control); font-size: 19px; }
+.settings-device input { width: 24px; height: 24px; flex-shrink: 0; accent-color: var(--amber); }
+.settings-device small { display: block; margin-top: 6px; color: var(--muted); font-size: 15px; }
 
 /* Phone-sized browsers: only the phone remote and administrator pages reflow. TV screens live on the
    scaled 1920×1080 stage, where viewport media queries do not apply. */

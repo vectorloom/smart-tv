@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { HomeAssistantSettings } from './HomeAssistantSettings';
 
 type Configuration = { revision: string; source: string; baseUrl: string; albumIds: string[]; keyConfigured: boolean; maskedKey: string | null };
 type Album = { id: string; name: string; assetCount: number; thumbnailId: string | null };
@@ -77,7 +78,7 @@ export function Settings() {
   if (checking) return <main className="settings-page"><p role="status">Checking administrator session…</p></main>;
   return <main className="settings-page">
     <h1>Administrator settings</h1>
-    <p>Immich connection and TV album selection</p>
+    <p>Immich photos, Home Assistant devices and what the TV shows</p>
     {message && <p role="status" className="notice">{message}</p>}
     {!authenticated ? <form onSubmit={signIn} className="settings-form">
       <label htmlFor="admin-password">Administrator passphrase</label>
@@ -120,6 +121,7 @@ export function Settings() {
         {configuration.source === 'environment' && <button type="button" disabled={busy} onClick={() => void save(true)}>Validate and import environment configuration</button>}
         <p>Import copies the server’s existing key and album IDs without sending the key to this browser. Future saves take precedence over environment variables.</p>
       </form>}
+      {configuration && <HomeAssistantSettings request={request} />}
     </>}
   </main>;
 }

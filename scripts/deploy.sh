@@ -101,7 +101,7 @@ for f in compose.yaml compose.settings.yaml; do
   [[ -f $f ]] || { echo 'preflight: required Compose file missing' >&2; exit 43; }
 done
 compose() {
-  env -i PATH="$PATH" HOME="$HOME" SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND="$bind_address" docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
+  env -i PATH="$PATH" HOME="$HOME" SMART_TV_HA_TARGETS=http://10.0.0.11:8123/api/ SMART_TV_HA_ADDRESSES=10.0.0.11 SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND="$bind_address" docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
 }
 if ! compose config --quiet >/dev/null 2>&1; then
   echo 'preflight: Compose interpolation or configuration validation failed' >&2; exit 48
@@ -205,7 +205,7 @@ platform_helper=$(printf '%s' "$platform_helper_b64" | base64 -d) || { echo 'dep
 eval "$platform_helper" || { echo 'deploy: cannot load platform validator' >&2; exit 64; }
 cd -- "$dir"
 compose() {
-  env -i PATH="$PATH" HOME="$HOME" SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND="$bind_address" docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
+  env -i PATH="$PATH" HOME="$HOME" SMART_TV_HA_TARGETS=http://10.0.0.11:8123/api/ SMART_TV_HA_ADDRESSES=10.0.0.11 SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND="$bind_address" docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
 }
 # Repeat critical read-only checks after transfer, before changing service state.
 host_ips=$(hostname -I 2>/dev/null) || { echo 'deploy: cannot identify SSH host' >&2; exit 60; }

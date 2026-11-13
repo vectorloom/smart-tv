@@ -5,4 +5,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../../src/api/SmartTv.Api.csproj" /></ItemGroup>
+  <!-- The synthetic Home Assistant shared with the API tests. -->
+  <ItemGroup><Compile Include="../api/FakeHomeAssistant.cs" /></ItemGroup>
 </Project>
