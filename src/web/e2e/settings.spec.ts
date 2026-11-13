@@ -64,7 +64,7 @@ test('HTTPS administrator settings, migration, selection, replacement rollback, 
     await admin.getByLabel('New or replacement API key').fill('synthetic-browser-replacement');
     await admin.getByRole('button', { name: 'Validate and save', exact: true }).click();
     await expect(admin.getByRole('status', { name: '', exact: true })).toContainText('Settings saved');
-    await expect(admin.getByLabel('Saved API key identifier')).toHaveText('synt' + '•'.repeat(21) + 'ment');
+    await expect(admin.getByLabel('Saved API key identifier')).toHaveText('synt' + '•'.repeat(16) + 'ment'); // 29 characters: 21 hidden, shown as at most 16 dots
     await admin.reload(); await expect(admin.getByLabel('Shared holiday', { exact: false })).toBeChecked();
     await expect(admin.getByLabel('New or replacement API key')).toHaveValue('');
     await admin.getByRole('button', { name: 'Sign out', exact: true }).click();
