@@ -184,9 +184,12 @@ if ! docker save "$image_ref" | ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMO
   die 'image transfer failed; the production service was not changed'
 fi
 
-# Deployment and rollback run remotely. The temporary Compose override lives in
-# /tmp, not the checkout, and lets Compose use the immutable SHA tag without
-# replacing the previous Compose image tag.
+# Deployment and rollback run remotely. A temporary Compose override in /tmp is
+# used only to render and validate the new image's configuration; it is never
+# passed to `up`. The dashboard is recreated from the two production Compose
+# files alone after the Compose image reference is pointed at the new image, so
+# the running container stays reproducible by plain Compose and by the next
+# preflight. The previous image keeps a separate rollback tag.
 if ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$sha" "$image_repo" "$EXPECTED_CONTAINER" "$HEALTH_URL" "$HEALTH_ATTEMPTS" "$production_bind_address" "$platform_helper_b64" <<'REMOTE_DEPLOY'
 set -Eeuo pipefail
 sha=$1
@@ -217,6 +220,16 @@ files=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.proj
 expected_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/projects/smart-tv/compose.settings.yaml'
 [[ $files == "$expected_files" ]] || { echo 'deploy: dashboard Compose files changed after preflight' >&2; exit 62; }
 [[ $(docker ps --filter "name=^/${container}$" --filter 'status=running' --format '{{.Names}}') == "$container" ]] || { echo 'deploy: dashboard is no longer running' >&2; exit 63; }
+old_id=$(docker inspect --format '{{.Image}}' "$container") || exit 66
+# The Compose image reference is the running container's reference; preflight
+# proved Compose resolves the dashboard to it. It must be a retaggable name in
+# the expected repository that still points at the running image.
+compose_ref=$(docker inspect --format '{{.Config.Image}}' "$container") || exit 62
+[[ $compose_ref != *@* ]] || { echo 'deploy: dashboard Compose image is pinned by digest and cannot be retagged' >&2; exit 62; }
+[[ ${compose_ref##*/} == *:* ]] || compose_ref="$compose_ref:latest"
+[[ ${compose_ref%:*} == "$image" ]] || { echo 'deploy: dashboard Compose image repository changed after preflight' >&2; exit 62; }
+[[ $(docker image inspect --format '{{.Id}}' "$compose_ref" 2>/dev/null) == "$old_id" ]] || { echo 'deploy: dashboard Compose image tag no longer points at the running image' >&2; exit 62; }
+[[ $(compose images -q dashboard 2>/dev/null) == "${old_id#sha256:}" || $(compose images -q dashboard 2>/dev/null) == "$old_id" ]] || { echo 'deploy: Compose dashboard image differs from the running image' >&2; exit 62; }
 new_ref="$image:$sha"
 new_id=$(docker image inspect --format '{{.Id}}' "$new_ref") || { echo 'deploy: transferred image is unavailable' >&2; exit 64; }
 override=$(mktemp /tmp/smart-tv-dashboard-image.XXXXXX.yaml)
@@ -284,10 +297,20 @@ normalized_new_platform=$(normalize_platform "$new_platform") || { echo 'deploy:
 normalized_remote_platform=$(normalize_platform "$remote_platform") || { echo 'deploy: invalid remote Docker platform' >&2; exit 65; }
 [[ $normalized_new_platform == "$normalized_remote_platform" ]] || { echo 'deploy: transferred image platform mismatch' >&2; exit 65; }
 [[ $new_revision == "$sha" ]] || { echo 'deploy: transferred image revision label mismatch' >&2; exit 65; }
-old_id=$(docker inspect --format '{{.Image}}' "$container") || exit 66
 old_short=${old_id#sha256:}; old_short=${old_short:0:12}
 other_containers=$(docker ps --filter 'label=com.docker.compose.project=smart-tv' --format '{{.ID}} {{.Names}}' | awk -v target="$container" '$2 != target {print $1 ":" $2}' | sort)
-compose_deploy() { compose -f "$dir/compose.yaml" -f "$dir/compose.settings.yaml" -f "$override" "$@"; }
+# Keep the previous image referenced before the Compose tag moves.
+rollback_ref="$image:rollback-${old_short}-$(date +%s)-$$"
+while docker image inspect "$rollback_ref" >/dev/null 2>&1; do rollback_ref="${rollback_ref}-x"; done
+docker tag "$old_id" "$rollback_ref" || { echo 'deploy: cannot tag the previous image for rollback; production was not changed' >&2; exit 66; }
+# Recreate from the production Compose files only (no override), so the
+# container's config_files label stays exactly the two production files.
+compose_deploy() { compose up -d --no-build --no-deps --force-recreate dashboard; }
+dashboard_matches() {
+  [[ $(docker inspect --format '{{.Image}}' "$container") == "$1" ]] &&
+  [[ $(docker image inspect --format '{{.Id}}' "$compose_ref") == "$1" ]] &&
+  [[ $(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$container") == "$expected_files" ]]
+}
 health_check() {
   local i
   for ((i=1; i<=attempts; i++)); do
@@ -296,35 +319,37 @@ health_check() {
   done
   return 1
 }
-deployment_reason='Compose recreation failed'
 deployment_health='not checked'
-if compose_deploy up -d --no-build --no-deps dashboard >"$log" 2>&1; then
+if ! docker tag "$new_ref" "$compose_ref" >/dev/null 2>&1; then
+  docker tag "$old_id" "$compose_ref" >/dev/null 2>&1 || true
+  echo 'deploy: could not point the Compose image tag at the new image; the dashboard was not recreated' >&2
+  exit 67
+fi
+deployment_reason='Compose recreation failed'
+if compose_deploy >"$log" 2>&1; then
   deployment_reason='health check failed'
   deployment_health='unhealthy or timed out'
   if health_check; then
     deployment_health='healthy'
-    deployment_reason='dashboard image did not match the requested revision'
-    if [[ $(docker inspect --format '{{.Image}}' "$container") == "$new_id" ]]; then
+    deployment_reason='dashboard image, Compose image tag, or Compose files did not match the requested revision'
+    if dashboard_matches "$new_id"; then
       deployment_reason='another smart-tv service changed unexpectedly'
       if [[ $(docker ps --filter 'label=com.docker.compose.project=smart-tv' --format '{{.ID}} {{.Names}}' | awk -v target="$container" '$2 != target {print $1 ":" $2}' | sort) == "$other_containers" ]]; then
-  printf 'Deployment SHA: %s\nHealth: healthy at %s\n' "$sha" "$health_url"
+  printf 'Deployment SHA: %s\nHealth: healthy at %s\nCompose image: %s\nPrevious image kept as: %s\n' "$sha" "$health_url" "$compose_ref" "$rollback_ref"
   exit 0
       fi
     fi
   fi
 fi
 printf 'Deployment SHA: %s\nHealth: %s at %s\nDeployment: failed (%s)\n' "$sha" "$deployment_health" "$health_url" "$deployment_reason"
-rollback_ref="$image:rollback-${old_short}-$(date +%s)-$$"
-while docker image inspect "$rollback_ref" >/dev/null 2>&1; do rollback_ref="${rollback_ref}-x"; done
-rollback_status='not attempted'
-if docker tag "$old_id" "$rollback_ref" >/dev/null 2>&1; then
-  write_override "$rollback_ref"
+rollback_status='could not point the Compose image tag back at the previous image'
+if docker tag "$old_id" "$compose_ref" >/dev/null 2>&1; then
   rollback_status='Compose recreation failed'
-  if compose_deploy up -d --no-build --no-deps dashboard >"$log" 2>&1; then
+  if compose_deploy >"$log" 2>&1; then
     rollback_status='health check failed'
     if health_check; then
       rollback_status='previous image was not restored'
-      if [[ $(docker inspect --format '{{.Image}}' "$container") == "$old_id" ]]; then rollback_status=healthy; fi
+      if dashboard_matches "$old_id"; then rollback_status=healthy; fi
     fi
   fi
 fi

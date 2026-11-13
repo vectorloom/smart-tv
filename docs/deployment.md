@@ -93,8 +93,18 @@ build, and browser tests before building the Docker image. It performs a
 read-only remote preflight before transferring the image. The transfer uses
 `docker save` over SSH directly into `docker load`; source files, `.env`,
 certificates, and credentials are not transferred. A temporary Compose override
-in remote `/tmp` selects the SHA-tagged image without changing either production
-Compose file or replacing the prior `latest` image tag.
+in remote `/tmp` is used only to render and validate the new image's
+configuration; it is never used to recreate the container.
+
+Before recreating, the script tags the previous image as
+`<repo>:rollback-<id>-<time>-<pid>` and then moves the dashboard's Compose image
+reference (normally `smart-tv-dashboard:latest`) to the SHA-tagged image. The
+dashboard is then recreated from `compose.yaml` and `compose.settings.yaml` only.
+So after a deployment the running container is exactly what a plain
+`docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml up` produces:
+its `com.docker.compose.project.config_files` label lists just those two files,
+and the next preflight accepts it. Neither production Compose file is changed.
+Rollback and SHA tags accumulate; remove old ones manually when no longer needed.
 
 Only `dashboard` is targeted with `up -d --no-build --no-deps dashboard`. The
 script never runs `docker compose down` and compares the IDs of the other running
@@ -105,8 +115,9 @@ expected to remain in place.
 Recreating the dashboard causes a short interruption. Phone pairings and the last
 good weather forecast survive it when the data volume (below) is mounted; without
 it they are kept in memory only and phones must pair again. If startup or the bounded health poll
-fails, the script attempts to tag the previous image under a rollback tag and
-recreate only `dashboard` with that image. It reports deployment and rollback
+fails, the script points the Compose image reference back at the previous image
+and recreates only `dashboard`. Success in either direction also requires the
+container, the Compose image tag, and the `config_files` label to agree. It reports deployment and rollback
 health separately. Rollback cannot reverse application data migrations,
 external side effects, or a simultaneous host/network/storage failure, and it
 does not delete the failed SHA-tagged image. If rollback does not pass health,
@@ -120,6 +131,28 @@ environment, bind mounts, volume, published `10.0.0.11:8080` binding, labels,
 and CPU architecture match the running container. If that cannot be established,
 the script intentionally stops before image transfer; do not supply the protected
 backup as `--env-file`.
+
+## Recovering a dashboard started by the earlier override-based script
+
+Earlier versions of the script recreated the dashboard with the `/tmp` override.
+Such a container fails preflight with "running dashboard does not use the
+expected Compose files": its `config_files` label lists the production files
+twice plus a deleted `/tmp/smart-tv-dashboard-image.*.yaml`, and it runs a
+SHA-tagged image that Compose does not resolve to. To adopt it without changing
+which image runs, on the server (check first what `latest` currently points to):
+
+```bash
+cd /home/lazyboy/projects/smart-tv
+docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}} {{.Config.Image}} {{.Image}}' smart-tv-dashboard-1
+docker image inspect --format '{{.Id}}' smart-tv-dashboard:latest
+docker tag "$(docker inspect --format '{{.Image}}' smart-tv-dashboard-1)" smart-tv-dashboard:latest
+export SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND=10.0.0.11
+docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml config --quiet
+docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml up -d --no-build --no-deps --force-recreate dashboard
+```
+
+This is a short interruption with the same image. Then rerun
+`scripts/deploy.sh --preflight-only "$(git rev-parse HEAD)"`.
 
 ## Data volume (runtime state)
 

@@ -163,8 +163,13 @@ fi
 ! grep -q -- '--env-file\|milestone3-predeploy\|\.env missing\|\.env unavailable' scripts/deploy.sh || { echo 'FAIL: deployment assumes or uses a protected backup as Compose input' >&2; exit 1; }
 grep -Fq 'docker save "$image_ref" | ssh' scripts/deploy.sh || { echo 'FAIL: image is not streamed through SSH' >&2; exit 1; }
 grep -Fq 'set -Eeuo pipefail' scripts/deploy.sh || { echo 'FAIL: pipeline failures may be masked' >&2; exit 1; }
-grep -Fq 'compose -f "$dir/compose.yaml" -f "$dir/compose.settings.yaml" -f "$override" "$@"' scripts/deploy.sh || { echo 'FAIL: deployment does not use both production Compose files' >&2; exit 1; }
-[[ $(grep -c 'up -d --no-build --no-deps dashboard' scripts/deploy.sh) -eq 2 ]] || { echo 'FAIL: deploy and rollback must both target dashboard only' >&2; exit 1; }
+grep -Fq 'compose_deploy() { compose up -d --no-build --no-deps --force-recreate dashboard; }' scripts/deploy.sh || { echo 'FAIL: deploy and rollback must recreate only dashboard from the production Compose files' >&2; exit 1; }
+[[ $(grep -c 'up -d' scripts/deploy.sh) -eq 1 ]] || { echo 'FAIL: dashboard recreation must go through the single compose_deploy definition' >&2; exit 1; }
+[[ $(grep -c '^if compose_deploy >"$log" 2>&1; then\|^  if compose_deploy >"$log" 2>&1; then' scripts/deploy.sh) -eq 2 ]] || { echo 'FAIL: deploy and rollback must both use compose_deploy' >&2; exit 1; }
+! grep -Eq 'compose_deploy\(\).*override|-f "\$override".*up' scripts/deploy.sh || { echo 'FAIL: the temporary override must never be used to recreate the dashboard' >&2; exit 1; }
+grep -Fq 'docker tag "$new_ref" "$compose_ref"' scripts/deploy.sh || { echo 'FAIL: deployment does not point the Compose image tag at the new image' >&2; exit 1; }
+grep -Fq 'docker tag "$old_id" "$compose_ref"' scripts/deploy.sh || { echo 'FAIL: rollback does not point the Compose image tag back at the previous image' >&2; exit 1; }
+grep -Fq 'Config.Labels "com.docker.compose.project.config_files"}}'"'"' "$container") == "$expected_files" ]]' scripts/deploy.sh || { echo 'FAIL: deployed dashboard is not verified to carry exactly the production Compose files' >&2; exit 1; }
 ! grep -Eq 'docker (image )?rm|docker rmi' scripts/deploy.sh || { echo 'FAIL: script may remove an image before health checks' >&2; exit 1; }
 grep -Fq 'canonical(running) != canonical(expected)' scripts/preflight-runtime.py || { echo 'FAIL: explicit Compose and running image refs are not compared' >&2; exit 1; }
 grep -Fq 'normalize_id(image_ids[0]) != normalize_id(inspect.get("Image", ""))' scripts/preflight-runtime.py || { echo 'FAIL: normalized Compose dashboard image ID is not matched to its running container' >&2; exit 1; }
@@ -184,6 +189,7 @@ grep -Fq '"$HEALTH_ATTEMPTS" "$production_bind_address"' scripts/deploy.sh || { 
 grep -Fq 'EXPECTED_BIND_ADDRESS="$bind_address"' scripts/deploy.sh || { echo 'FAIL: rendered Compose bind is not validated against the intended address' >&2; exit 1; }
 grep -Fq 'python3 -c "$(printf' scripts/deploy.sh || { echo 'FAIL: read-only preflight does not run the transported diagnostic validator' >&2; exit 1; }
 grep -Fq 'deployment_health=' scripts/deploy.sh || { echo 'FAIL: deployment health outcome is not tracked' >&2; exit 1; }
-grep -Fq 'docker inspect --format '\''{{.Image}}'\'' "$container") == "$old_id"' scripts/deploy.sh || { echo 'FAIL: rollback does not verify restoration of the previous image' >&2; exit 1; }
+grep -Fq 'dashboard_matches "$old_id"' scripts/deploy.sh || { echo 'FAIL: rollback does not verify restoration of the previous image' >&2; exit 1; }
+grep -Fq 'dashboard_matches "$new_id"' scripts/deploy.sh || { echo 'FAIL: deployment does not verify the new image, Compose tag and Compose files' >&2; exit 1; }
 grep -Fq 'docker tag "$old_id" "$rollback_ref"' scripts/deploy.sh || { echo 'FAIL: rollback does not retain the previous image under a separate tag' >&2; exit 1; }
 printf 'deploy-script tests passed\n'
