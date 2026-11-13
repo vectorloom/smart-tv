@@ -238,6 +238,8 @@ PLAYWRIGHT_BROWSERS_PATH=../../.local/playwright npm run test:browser
 
 Do not use `playwright install --with-deps` on this host; it installs system packages. Browser tests verify TV-sized keyboard operation and mobile overflow. They also use two independent browser contexts against the real WebSocket endpoint to verify pairing, command delivery, tab isolation, transport reconnection, and unpairing. A longevity test runs about 200 home-slideshow crossfades and 200 viewer advances and checks that the DOM size, live image objects (after garbage collection) and object URLs stay flat. Every screen, including the full-screen viewer with its controls, is checked for text below 16 px. API tests cover expiry, rate limits, authorization, malformed messages, credential revocation, session persistence, and disconnected delivery. Their screenshots and reports are ignored build artifacts.
 
+Tests tagged `@perf` (the wind map's frame rate) measure the machine as much as the code, so `scripts/deploy.sh` skips them with `--grep-invert @perf`. A plain run still includes them; after changing the wind map, run `bash scripts/test-browser.sh --grep @perf` on a machine that isn't hot or power-throttled.
+
 ## Deployment
 
 See [the deployment guide](docs/deployment.md) for prerequisites and the

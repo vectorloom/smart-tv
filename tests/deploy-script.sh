@@ -115,12 +115,12 @@ for invalid_bind in '' 127.0.0.1 0.0.0.0 10.0.0.12; do
   fi
 done
 
-actual_shell_tests=$(grep -E '^bash scripts/(test-api|build-test-host|test-browser)\.sh$' scripts/deploy.sh)
-expected_shell_tests=$'bash scripts/test-api.sh\nbash scripts/build-test-host.sh\nbash scripts/test-browser.sh'
+actual_shell_tests=$(grep -E '^bash scripts/(test-api|build-test-host|test-browser)\.sh( |$)' scripts/deploy.sh)
+expected_shell_tests=$'bash scripts/test-api.sh\nbash scripts/build-test-host.sh\nbash scripts/test-browser.sh --grep-invert @perf'
 [[ $actual_shell_tests == "$expected_shell_tests" ]] || {
   echo 'FAIL: deployment shell tests must run through Bash in the existing order' >&2; exit 1;
 }
-! grep -Eq '^scripts/(test-api|build-test-host|test-browser)\.sh$' scripts/deploy.sh || {
+! grep -Eq '^scripts/(test-api|build-test-host|test-browser)\.sh( |$)' scripts/deploy.sh || {
   echo 'FAIL: deployment directly invokes a shell test script' >&2; exit 1;
 }
 
