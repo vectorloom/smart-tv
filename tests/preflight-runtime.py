@@ -9,7 +9,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "scripts/preflight-runtime.py"
 IMAGE = "ghcr.io/vectorloom/smart-tv:stable"
-IMAGE_ID = "sha256:0123456789"
+IMAGE_ID = "0123456789"
 SECRET = "DO_NOT_PRINT_sensitive_runtime_value"
 
 
@@ -27,9 +27,9 @@ def fixture():
         }}}
 
 
-def run(case):
+def run(case, compose_image_id=IMAGE_ID):
     inspect = {"Config": {"Image": IMAGE, "Env": [f"ASPNETCORE_URLS=http://+:8080", f"Immich__ApiKey={SECRET}"]},
-               "Image": IMAGE_ID,
+        "Image": f"sha256:{IMAGE_ID}",
                "Mounts": [
                    {"Type": "volume", "Name": "smart-tv_settings", "Destination": "/app/state", "RW": False},
                    {"Type": "bind", "Name": "", "Source": "/repo/cert", "Destination": "/run/settings-secrets/wrapping.crt", "RW": False},
@@ -67,7 +67,8 @@ else: sys.exit(2)
             "MOCK_CASE": case,
             "MOCK_INSPECT": str(inspect_path),
             "COMPOSE_IMAGE_LIST": IMAGE,
-            "COMPOSE_SERVICE_IMAGE_IDS": IMAGE_ID,
+            "COMPOSE_SERVICE_IMAGE_IDS": compose_image_id,
+            "EXPECTED_BIND_ADDRESS": "10.0.0.11",
         }
         return subprocess.run(["python3", str(HELPER)], input=json.dumps(config), text=True,
                               capture_output=True, env=env)
@@ -76,6 +77,7 @@ else: sys.exit(2)
 ok = run("ok")
 assert ok.returncode == 0, ok.stderr
 assert "linux/amd64" in ok.stderr and IMAGE in ok.stderr
+assert run("ok", f"sha256:{IMAGE_ID}").returncode == 0, "identical prefixed image IDs must match"
 for case, category in [("environment", "environment"), ("port", "published-port"),
                        ("settings-mount", "settings-mount"), ("secret-mount", "secret-mount"),
                        ("image", "image-reference")]:
@@ -84,4 +86,6 @@ for case, category in [("environment", "environment"), ("port", "published-port"
     assert f"[{category}]" in result.stderr, result.stderr
     assert SECRET not in result.stderr and SECRET not in result.stdout, "secret value leaked"
 assert "mismatched names=['Immich__ApiKey']" in run("environment").stderr
+different_id = run("ok", "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+assert different_id.returncode != 0 and "[image-id]" in different_id.stderr
 print("preflight-runtime diagnostic tests passed")

@@ -1,12 +1,13 @@
 import { defineConfig } from '@playwright/test';
 
 const webPort = Number(process.env.SMART_TV_TEST_WEB_PORT ?? 5173);
+const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 
 export default defineConfig({
   testDir: './e2e',
   use: {
     baseURL: `http://127.0.0.1:${webPort}`, viewport: { width: 1920, height: 1080 },
-    launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH },
+    launchOptions: chromiumExecutablePath ? { executablePath: chromiumExecutablePath } : {},
   },
   workers: 1,
   webServer: [

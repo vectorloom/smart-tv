@@ -41,8 +41,9 @@ def main():
         report("image-reference", f"running={running!r} expected={expected!r}")
     if running and canonical(running) not in {canonical(name) for name in image_list}:
         report("image-list", f"running image {running!r} is absent from Compose image references")
-    if image_ids != [inspect.get("Image")]:
-        report("image-id", f"Compose dashboard image IDs={image_ids!r}; running image ID={inspect.get('Image')!r}")
+    normalize_id = lambda image_id: image_id[7:] if image_id.startswith("sha256:") else image_id
+    if len(image_ids) != 1 or normalize_id(image_ids[0]) != normalize_id(inspect.get("Image", "")):
+        report("image-id", "Compose dashboard image ID differs from the running container image ID")
     image_repo = (running or "").split("@", 1)[0]
     if ":" in image_repo.rsplit("/", 1)[-1]:
         image_repo = image_repo.rsplit(":", 1)[0]
@@ -66,8 +67,9 @@ def main():
         report("environment", f"missing names={missing!r}; extra names={extra!r}; mismatched names={mismatched!r}")
 
     ports = service.get("ports", [])
-    if not any(str(p.get("published")) == "8080" and str(p.get("target")) == "8080" and p.get("host_ip") == "10.0.0.11" for p in ports):
-        report("published-port", f"expected bind 10.0.0.11:8080->8080; rendered binds={[(p.get('host_ip'), p.get('published'), p.get('target')) for p in ports]!r}")
+    bind_address = os.environ.get("EXPECTED_BIND_ADDRESS", "")
+    if not bind_address or not any(str(p.get("published")) == "8080" and str(p.get("target")) == "8080" and p.get("host_ip") == bind_address for p in ports):
+        report("published-port", f"expected bind {bind_address or '<unset>'}:8080->8080; rendered binds={[(p.get('host_ip'), p.get('published'), p.get('target')) for p in ports]!r}")
 
     mounts = inspect.get("Mounts", [])
     mount_facts = [(m.get("Destination"), "rw" if m.get("RW") else "ro", m.get("Name") or m.get("Type")) for m in mounts]

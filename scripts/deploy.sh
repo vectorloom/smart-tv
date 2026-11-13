@@ -4,6 +4,7 @@ set -Eeuo pipefail
 readonly REMOTE_HOST='lazyboy@10.0.0.11'
 readonly REMOTE_DIR='/home/lazyboy/projects/smart-tv'
 readonly EXPECTED_CONTAINER='smart-tv-dashboard-1'
+readonly EXPECTED_BIND_ADDRESS='10.0.0.11'
 readonly HEALTH_URL='http://10.0.0.11:8080/api/health'
 readonly HEALTH_ATTEMPTS=30
 
@@ -60,9 +61,12 @@ if [[ -n $(git status --porcelain=v1 --untracked-files=all 2>/dev/null) ]]; then
 fi
 
 for required in Dockerfile .dockerignore compose.yaml compose.settings.yaml \
-  scripts/test-api.sh scripts/build-test-host.sh scripts/test-browser.sh; do
+  scripts/platform.sh scripts/validate-production-bind.sh scripts/test-api.sh scripts/build-test-host.sh scripts/test-browser.sh; do
   [[ -f $required ]] || die "required repository file is missing: $required"
 done
+source "$script_dir/platform.sh"
+production_bind_address=$(bash "$script_dir/validate-production-bind.sh" "$EXPECTED_BIND_ADDRESS") || die 'production bind address could not be established safely'
+platform_helper_b64=$(base64 <"$script_dir/platform.sh" | tr -d '\n')
 
 if $dry_run; then
   printf 'Dry run: local revision %s matches clean HEAD.\n' "$sha"
@@ -76,11 +80,16 @@ remote_preflight() {
 # This check is read-only. Compose receives the known, previously exported
 # non-secret setting. Its resolved configuration must match the live dashboard.
 validator_b64=$(base64 <"$script_dir/preflight-runtime.py" | tr -d '\n')
-remote_preflight=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$EXPECTED_CONTAINER" "$REMOTE_DIR" "$validator_b64" <<'REMOTE_PREFLIGHT'
+remote_preflight=$(ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$EXPECTED_CONTAINER" "$REMOTE_DIR" "$production_bind_address" "$validator_b64" "$platform_helper_b64" <<'REMOTE_PREFLIGHT'
 set -Eeuo pipefail
 expected_container=$1
 expected_dir='/home/lazyboy/projects/smart-tv'
-validator_b64=$3
+bind_address=$3
+validator_b64=$4
+platform_helper_b64=$5
+[[ $bind_address == 10.0.0.11 ]] || { echo 'preflight: production bind address is missing or unexpected' >&2; exit 40; }
+platform_helper=$(printf '%s' "$platform_helper_b64" | base64 -d) || { echo 'preflight: cannot load platform validator' >&2; exit 58; }
+eval "$platform_helper" || { echo 'preflight: cannot load platform validator' >&2; exit 58; }
 [[ $2 == "$expected_dir" ]] || exit 40
 host_ips=$(hostname -I 2>/dev/null) || { echo 'preflight: cannot identify SSH host' >&2; exit 41; }
 host_matches=false
@@ -92,7 +101,7 @@ for f in compose.yaml compose.settings.yaml; do
   [[ -f $f ]] || { echo 'preflight: required Compose file missing' >&2; exit 43; }
 done
 compose() {
-  env -i PATH="$PATH" HOME="$HOME" SMART_TV_IMMICH_ADDRESSES=10.0.0.11 docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
+  env -i PATH="$PATH" HOME="$HOME" SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND="$bind_address" docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
 }
 if ! compose config --quiet >/dev/null 2>&1; then
   echo 'preflight: Compose interpolation or configuration validation failed' >&2; exit 48
@@ -112,13 +121,13 @@ expected_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/proje
   }
 }
 platform=$(docker info --format '{{.OSType}}/{{.Architecture}}' 2>/dev/null) || { echo 'preflight: cannot inspect remote Docker platform' >&2; exit 57; }
-[[ $platform == */* ]] || { echo 'preflight: invalid remote Docker platform' >&2; exit 58; }
+normalize_platform "$platform" >/dev/null || { echo 'preflight: invalid remote Docker platform' >&2; exit 58; }
 # Validate resolved runtime configuration against the currently running service
 # in memory. The validator reports mismatch categories and non-secret metadata;
 # Compose's expanded configuration is never written to a file or emitted.
 images=$(compose config --images 2>/dev/null) || { echo 'preflight: cannot resolve Compose image references' >&2; exit 49; }
 service_image_ids=$(compose images -q dashboard 2>/dev/null) || { echo 'preflight: cannot resolve the dashboard Compose image' >&2; exit 49; }
-image_repo=$(compose config --format json 2>/dev/null | COMPOSE_IMAGE_LIST="$images" COMPOSE_SERVICE_IMAGE_IDS="$service_image_ids" python3 -c "$(printf '%s' "$validator_b64" | base64 -d)") || {
+image_repo=$(compose config --format json 2>/dev/null | COMPOSE_IMAGE_LIST="$images" COMPOSE_SERVICE_IMAGE_IDS="$service_image_ids" EXPECTED_BIND_ADDRESS="$bind_address" python3 -c "$(printf '%s' "$validator_b64" | base64 -d)") || {
   echo 'preflight: resolved Compose image/runtime configuration cannot be proven to match the running dashboard' >&2; exit 59;
 }
 printf 'PREFLIGHT_OK\t%s\t%s\n' "$platform" "$image_repo"
@@ -145,11 +154,11 @@ npm run build --prefix src/web
 printf 'Running frontend unit tests...\n'
 npm test --prefix src/web
 printf 'Running API tests...\n'
-scripts/test-api.sh
+bash scripts/test-api.sh
 printf 'Building browser test host...\n'
-scripts/build-test-host.sh
+bash scripts/build-test-host.sh
 printf 'Running browser tests...\n'
-scripts/test-browser.sh
+bash scripts/test-browser.sh
 
 result=$(remote_preflight) || die 'remote read-only preflight failed; no production changes were made'
 IFS=$'\t' read -r remote_platform image_repo <<<"$result"
@@ -164,8 +173,9 @@ fi
 printf 'Building %s...\n' "$image_ref"
 docker build --label "org.opencontainers.image.revision=$sha" --tag "$image_ref" --file "$repo_root/Dockerfile" "$repo_root"
 local_platform=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$image_ref") || die 'cannot inspect the locally built image'
-[[ $local_platform == */* ]] || die 'could not determine the local image platform'
-[[ $local_platform == "$remote_platform" ]] || die "image platform mismatch (local $local_platform, remote $remote_platform)"
+normalized_local_platform=$(normalize_platform "$local_platform") || die "invalid local image platform: $local_platform"
+normalized_remote_platform=$(normalize_platform "$remote_platform") || die "invalid remote Docker platform: $remote_platform"
+[[ $normalized_local_platform == "$normalized_remote_platform" ]] || die "image platform mismatch (local $local_platform, remote $remote_platform)"
 local_revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image_ref") || die 'cannot inspect the image revision label'
 [[ $local_revision == "$sha" ]] || die 'local image revision label does not match the requested SHA'
 
@@ -174,20 +184,28 @@ if ! docker save "$image_ref" | ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMO
   die 'image transfer failed; the production service was not changed'
 fi
 
-# Deployment and rollback run remotely. The temporary Compose override lives in
-# /tmp, not the checkout, and lets Compose use the immutable SHA tag without
-# replacing the previous Compose image tag.
-if ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$sha" "$image_repo" "$EXPECTED_CONTAINER" "$HEALTH_URL" "$HEALTH_ATTEMPTS" <<'REMOTE_DEPLOY'
+# Deployment and rollback run remotely. A temporary Compose override in /tmp is
+# used only to render and validate the new image's configuration; it is never
+# passed to `up`. The dashboard is recreated from the two production Compose
+# files alone after the Compose image reference is pointed at the new image, so
+# the running container stays reproducible by plain Compose and by the next
+# preflight. The previous image keeps a separate rollback tag.
+if ssh -o BatchMode=yes -o ConnectTimeout=10 "$REMOTE_HOST" bash -s -- "$sha" "$image_repo" "$EXPECTED_CONTAINER" "$HEALTH_URL" "$HEALTH_ATTEMPTS" "$production_bind_address" "$platform_helper_b64" <<'REMOTE_DEPLOY'
 set -Eeuo pipefail
 sha=$1
 image=$2
 container=$3
 health_url=$4
 attempts=$5
+bind_address=$6
+platform_helper_b64=$7
 dir='/home/lazyboy/projects/smart-tv'
+[[ $bind_address == 10.0.0.11 ]] || { echo 'deploy: production bind address is missing or unexpected' >&2; exit 60; }
+platform_helper=$(printf '%s' "$platform_helper_b64" | base64 -d) || { echo 'deploy: cannot load platform validator' >&2; exit 64; }
+eval "$platform_helper" || { echo 'deploy: cannot load platform validator' >&2; exit 64; }
 cd -- "$dir"
 compose() {
-  env -i PATH="$PATH" HOME="$HOME" SMART_TV_IMMICH_ADDRESSES=10.0.0.11 docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
+  env -i PATH="$PATH" HOME="$HOME" SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND="$bind_address" docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml "$@"
 }
 # Repeat critical read-only checks after transfer, before changing service state.
 host_ips=$(hostname -I 2>/dev/null) || { echo 'deploy: cannot identify SSH host' >&2; exit 60; }
@@ -202,51 +220,100 @@ files=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.proj
 expected_files='/home/lazyboy/projects/smart-tv/compose.yaml,/home/lazyboy/projects/smart-tv/compose.settings.yaml'
 [[ $files == "$expected_files" ]] || { echo 'deploy: dashboard Compose files changed after preflight' >&2; exit 62; }
 [[ $(docker ps --filter "name=^/${container}$" --filter 'status=running' --format '{{.Names}}') == "$container" ]] || { echo 'deploy: dashboard is no longer running' >&2; exit 63; }
+old_id=$(docker inspect --format '{{.Image}}' "$container") || exit 66
+# The Compose image reference is the running container's reference; preflight
+# proved Compose resolves the dashboard to it. It must be a retaggable name in
+# the expected repository that still points at the running image.
+compose_ref=$(docker inspect --format '{{.Config.Image}}' "$container") || exit 62
+[[ $compose_ref != *@* ]] || { echo 'deploy: dashboard Compose image is pinned by digest and cannot be retagged' >&2; exit 62; }
+[[ ${compose_ref##*/} == *:* ]] || compose_ref="$compose_ref:latest"
+[[ ${compose_ref%:*} == "$image" ]] || { echo 'deploy: dashboard Compose image repository changed after preflight' >&2; exit 62; }
+[[ $(docker image inspect --format '{{.Id}}' "$compose_ref" 2>/dev/null) == "$old_id" ]] || { echo 'deploy: dashboard Compose image tag no longer points at the running image' >&2; exit 62; }
+[[ $(compose images -q dashboard 2>/dev/null) == "${old_id#sha256:}" || $(compose images -q dashboard 2>/dev/null) == "$old_id" ]] || { echo 'deploy: Compose dashboard image differs from the running image' >&2; exit 62; }
 new_ref="$image:$sha"
 new_id=$(docker image inspect --format '{{.Id}}' "$new_ref") || { echo 'deploy: transferred image is unavailable' >&2; exit 64; }
-images=$(compose config --images 2>/dev/null) || { echo 'deploy: cannot revalidate Compose images' >&2; exit 64; }
-service_image_ids=$(compose images -q dashboard 2>/dev/null) || { echo 'deploy: cannot revalidate dashboard image' >&2; exit 64; }
-if ! compose config --format json 2>/dev/null | COMPOSE_IMAGE_LIST="$images" COMPOSE_SERVICE_IMAGE_IDS="$service_image_ids" NEW_IMAGE_ID="$new_id" python3 -c '
-import json, os, sys
-try:
-    config=json.load(sys.stdin); service=config["services"]["dashboard"]
-    inspect=json.loads(__import__("subprocess").check_output(["docker","inspect","smart-tv-dashboard-1"],text=True))[0]
-    canonical=lambda name: name if "@" in name or ":" in name.rsplit("/",1)[-1] else name+":latest"
-    running=inspect["Config"]["Image"]; expected=service.get("image")
-    if expected and canonical(expected)!=canonical(running): raise ValueError()
-    if canonical(running) not in {canonical(n) for n in os.environ["COMPOSE_IMAGE_LIST"].splitlines()}: raise ValueError()
-    if os.environ["COMPOSE_SERVICE_IMAGE_IDS"].splitlines()!=[inspect["Image"]]: raise ValueError()
-    desired={str(k):str(v) for k,v in service.get("environment",{}).items()}
-    current=dict(item.split("=",1) for item in inspect["Config"].get("Env",[]) if "=" in item)
-    image_config=json.loads(__import__("subprocess").check_output(["docker","image","inspect",os.environ["NEW_IMAGE_ID"]],text=True))[0]
-    expected=dict(item.split("=",1) for item in image_config["Config"].get("Env",[]) if "=" in item); expected.update(desired)
-    if current!=expected: raise ValueError()
-    if not any(str(p.get("published"))=="8080" and str(p.get("target"))=="8080" and p.get("host_ip")=="10.0.0.11" for p in service.get("ports",[])): raise ValueError()
-    mounts=inspect.get("Mounts",[])
-    if not any(m.get("Name")=="smart-tv_settings" and m.get("Destination")=="/app/state" and not m.get("RW") for m in mounts): raise ValueError()
-    wanted={"/run/settings-secrets/wrapping.crt","/run/settings-secrets/wrapping.key"}
-    desired_mounts={m.get("target"):m for m in service.get("volumes",[])}
-    current_mounts={m.get("Destination"):m for m in mounts}
-    for target in wanted:
-        d=desired_mounts[target]; c=current_mounts[target]
-        if d.get("type")!="bind" or not d.get("read_only") or c.get("Source")!=d.get("source") or c.get("RW"): raise ValueError()
-except Exception:
-    print("deploy: runtime configuration changed or cannot be validated",file=sys.stderr); sys.exit(1)
-'; then exit 64; fi
-new_platform=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$new_ref") || exit 64
-new_revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$new_ref") || exit 64
-remote_platform=$(docker info --format '{{.OSType}}/{{.Architecture}}') || exit 64
-[[ $new_platform == "$remote_platform" ]] || { echo 'deploy: transferred image platform mismatch' >&2; exit 65; }
-[[ $new_revision == "$sha" ]] || { echo 'deploy: transferred image revision label mismatch' >&2; exit 65; }
-old_id=$(docker inspect --format '{{.Image}}' "$container") || exit 66
-old_short=${old_id#sha256:}; old_short=${old_short:0:12}
-other_containers=$(docker ps --filter 'label=com.docker.compose.project=smart-tv' --format '{{.ID}} {{.Names}}' | awk -v target="$container" '$2 != target {print $1 ":" $2}' | sort)
 override=$(mktemp /tmp/smart-tv-dashboard-image.XXXXXX.yaml)
 log=$(mktemp /tmp/smart-tv-dashboard-compose.XXXXXX.log)
 cleanup() { rm -f -- "$override" "$log"; }
 trap cleanup EXIT
 write_override() { printf 'services:\n  dashboard:\n    image: "%s"\n' "$1" >"$override"; chmod 600 "$override"; }
-compose_deploy() { compose -f "$dir/compose.yaml" -f "$dir/compose.settings.yaml" -f "$override" "$@"; }
+write_override "$new_ref"
+if ! compose -f "$override" config --format json 2>/dev/null | NEW_IMAGE_REF="$new_ref" NEW_IMAGE_ID="$new_id" OLD_IMAGE_ID="$old_id" EXPECTED_BIND_ADDRESS="$bind_address" python3 -c '
+import json, os, sys
+try:
+    config=json.load(sys.stdin); service=config["services"]["dashboard"]
+    inspect=json.loads(__import__("subprocess").check_output(["docker","inspect","smart-tv-dashboard-1"],text=True))[0]
+    failures=[]
+    def mismatch(category, detail):
+        failures.append(category)
+        print(f"deploy: runtime mismatch [{category}]: {detail}",file=sys.stderr)
+    effective_ref=service.get("image")
+    expected_ref=os.environ["NEW_IMAGE_REF"]
+    canonical=lambda name: name if "@" in name or ":" in name.rsplit("/",1)[-1] else name+":latest"
+    if not effective_ref or canonical(effective_ref)!=canonical(expected_ref):
+        mismatch("image identity", "effective Compose image reference does not match the transferred SHA image")
+    try:
+        effective_id=json.loads(__import__("subprocess").check_output(["docker","image","inspect",effective_ref],text=True))[0]["Id"] if effective_ref else ""
+    except Exception:
+        effective_id=""
+        mismatch("image identity", "effective Compose image reference cannot be resolved to a local image ID")
+    if effective_id!=os.environ["NEW_IMAGE_ID"]:
+        mismatch("image identity", "effective Compose image ID differs from the transferred image ID")
+    desired={str(k):str(v) for k,v in service.get("environment",{}).items()}
+    current=dict(item.split("=",1) for item in inspect["Config"].get("Env",[]) if "=" in item)
+    # The running container must still be exactly the previous image ENV plus the
+    # Compose environment (nothing changed or injected since preflight). The new
+    # image may add or change its own ENV defaults; those are not compared.
+    image_config=json.loads(__import__("subprocess").check_output(["docker","image","inspect",os.environ["OLD_IMAGE_ID"]],text=True))[0]
+    expected=dict(item.split("=",1) for item in image_config["Config"].get("Env",[]) if "=" in item); expected.update(desired)
+    missing=sorted(expected.keys()-current.keys())
+    extra=sorted(current.keys()-expected.keys())
+    different=sorted(k for k in expected.keys()&current.keys() if expected[k]!=current[k])
+    if missing or extra or different:
+        mismatch("environment", f"missing names={missing!r}; extra names={extra!r}; mismatched names={different!r}")
+    ports=service.get("ports",[])
+    if not any(str(p.get("published"))=="8080" and str(p.get("target"))=="8080" and p.get("host_ip")==os.environ["EXPECTED_BIND_ADDRESS"] for p in ports):
+        rendered=[(p.get("host_ip"),p.get("published"),p.get("target")) for p in ports]
+        mismatch("port binding", f"expected {os.environ['EXPECTED_BIND_ADDRESS']}:8080->8080; rendered={rendered!r}")
+    mounts=inspect.get("Mounts",[])
+    if not any(m.get("Name")=="smart-tv_settings" and m.get("Destination")=="/app/state" and not m.get("RW") for m in mounts):
+        observed=[(m.get("Name") or m.get("Type"),"rw" if m.get("RW") else "ro") for m in mounts if m.get("Destination")=="/app/state"]
+        mismatch("settings volume", f"destination=/app/state; observed identity/mode={observed!r}; expected=[('smart-tv_settings','ro')]")
+    wanted={"/run/settings-secrets/wrapping.crt","/run/settings-secrets/wrapping.key"}
+    desired_mounts={m.get("target"):m for m in service.get("volumes",[])}
+    current_mounts={m.get("Destination"):m for m in mounts}
+    for target in wanted:
+        d=desired_mounts.get(target); c=current_mounts.get(target)
+        rendered_ok=bool(d and d.get("type")=="bind" and d.get("read_only"))
+        identity_matches=bool(d and c and c.get("Source")==d.get("source"))
+        running_mode="rw" if c and c.get("RW") else "ro" if c else "missing"
+        if not rendered_ok or not identity_matches or not c or c.get("RW"):
+            mismatch("certificate mount", f"destination={target!r}; rendered_bind_read_only={rendered_ok}; running_mode={running_mode}; source_identity_matches={identity_matches}")
+    if failures: sys.exit(1)
+except Exception:
+    print("deploy: runtime mismatch [validator]: configuration or Docker inspection could not be validated",file=sys.stderr); sys.exit(1)
+'; then exit 64; fi
+new_platform=$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$new_ref") || exit 64
+new_revision=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$new_ref") || exit 64
+remote_platform=$(docker info --format '{{.OSType}}/{{.Architecture}}') || exit 64
+normalized_new_platform=$(normalize_platform "$new_platform") || { echo 'deploy: invalid transferred image platform' >&2; exit 65; }
+normalized_remote_platform=$(normalize_platform "$remote_platform") || { echo 'deploy: invalid remote Docker platform' >&2; exit 65; }
+[[ $normalized_new_platform == "$normalized_remote_platform" ]] || { echo 'deploy: transferred image platform mismatch' >&2; exit 65; }
+[[ $new_revision == "$sha" ]] || { echo 'deploy: transferred image revision label mismatch' >&2; exit 65; }
+old_short=${old_id#sha256:}; old_short=${old_short:0:12}
+other_containers=$(docker ps --filter 'label=com.docker.compose.project=smart-tv' --format '{{.ID}} {{.Names}}' | awk -v target="$container" '$2 != target {print $1 ":" $2}' | sort)
+# Keep the previous image referenced before the Compose tag moves.
+rollback_ref="$image:rollback-${old_short}-$(date +%s)-$$"
+while docker image inspect "$rollback_ref" >/dev/null 2>&1; do rollback_ref="${rollback_ref}-x"; done
+docker tag "$old_id" "$rollback_ref" || { echo 'deploy: cannot tag the previous image for rollback; production was not changed' >&2; exit 66; }
+# Recreate from the production Compose files only (no override), so the
+# container's config_files label stays exactly the two production files.
+compose_deploy() { compose up -d --no-build --no-deps --force-recreate dashboard; }
+dashboard_matches() {
+  [[ $(docker inspect --format '{{.Image}}' "$container") == "$1" ]] &&
+  [[ $(docker image inspect --format '{{.Id}}' "$compose_ref") == "$1" ]] &&
+  [[ $(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$container") == "$expected_files" ]]
+}
 health_check() {
   local i
   for ((i=1; i<=attempts; i++)); do
@@ -255,36 +322,37 @@ health_check() {
   done
   return 1
 }
-write_override "$new_ref"
-deployment_reason='Compose recreation failed'
 deployment_health='not checked'
-if compose_deploy up -d --no-build --no-deps dashboard >"$log" 2>&1; then
+if ! docker tag "$new_ref" "$compose_ref" >/dev/null 2>&1; then
+  docker tag "$old_id" "$compose_ref" >/dev/null 2>&1 || true
+  echo 'deploy: could not point the Compose image tag at the new image; the dashboard was not recreated' >&2
+  exit 67
+fi
+deployment_reason='Compose recreation failed'
+if compose_deploy >"$log" 2>&1; then
   deployment_reason='health check failed'
   deployment_health='unhealthy or timed out'
   if health_check; then
     deployment_health='healthy'
-    deployment_reason='dashboard image did not match the requested revision'
-    if [[ $(docker inspect --format '{{.Image}}' "$container") == "$new_id" ]]; then
+    deployment_reason='dashboard image, Compose image tag, or Compose files did not match the requested revision'
+    if dashboard_matches "$new_id"; then
       deployment_reason='another smart-tv service changed unexpectedly'
       if [[ $(docker ps --filter 'label=com.docker.compose.project=smart-tv' --format '{{.ID}} {{.Names}}' | awk -v target="$container" '$2 != target {print $1 ":" $2}' | sort) == "$other_containers" ]]; then
-  printf 'Deployment SHA: %s\nHealth: healthy at %s\n' "$sha" "$health_url"
+  printf 'Deployment SHA: %s\nHealth: healthy at %s\nCompose image: %s\nPrevious image kept as: %s\n' "$sha" "$health_url" "$compose_ref" "$rollback_ref"
   exit 0
       fi
     fi
   fi
 fi
 printf 'Deployment SHA: %s\nHealth: %s at %s\nDeployment: failed (%s)\n' "$sha" "$deployment_health" "$health_url" "$deployment_reason"
-rollback_ref="$image:rollback-${old_short}-$(date +%s)-$$"
-while docker image inspect "$rollback_ref" >/dev/null 2>&1; do rollback_ref="${rollback_ref}-x"; done
-rollback_status='not attempted'
-if docker tag "$old_id" "$rollback_ref" >/dev/null 2>&1; then
-  write_override "$rollback_ref"
+rollback_status='could not point the Compose image tag back at the previous image'
+if docker tag "$old_id" "$compose_ref" >/dev/null 2>&1; then
   rollback_status='Compose recreation failed'
-  if compose_deploy up -d --no-build --no-deps dashboard >"$log" 2>&1; then
+  if compose_deploy >"$log" 2>&1; then
     rollback_status='health check failed'
     if health_check; then
       rollback_status='previous image was not restored'
-      if [[ $(docker inspect --format '{{.Image}}' "$container") == "$old_id" ]]; then rollback_status=healthy; fi
+      if dashboard_matches "$old_id"; then rollback_status=healthy; fi
     fi
   fi
 fi
@@ -302,5 +370,10 @@ REMOTE_DEPLOY
 then
   exit 0
 else
+  status=$?
+  # Remote exit codes 60-67 are raised before the dashboard is recreated.
+  if ((status >= 60 && status <= 67)); then
+    die "remote deployment checks failed (exit $status); the dashboard was not changed. The transferred $image_ref stays loaded, so deploy a new commit after fixing the cause"
+  fi
   die "deployment or rollback failed; inspect production health at $HEALTH_URL"
 fi

@@ -31,8 +31,7 @@ async function gallery(page: Page, mode: 'missed-load' | 'slow') {
     return route.fulfill({ json: [{ id: 'album', name: 'Five photos', assetCount: 5 }] });
   });
   await page.clock.install();
-  await page.goto('/');
-  await page.getByRole('button', { name: /Five photos/ }).click();
+  await page.goto('/photos/album');
   await page.getByRole('button', { name: 'Play album' }).click();
   return { errors, release: () => release!() };
 }

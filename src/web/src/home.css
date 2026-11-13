@@ -1,0 +1,175 @@
+/* Home screen, layout A. Fixed 1920×1080 canvas: content never sets the page height. */
+.home {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 520px;
+  grid-template-rows: minmax(0, 1fr);
+  gap: 40px;
+  padding: var(--screen-padding);
+}
+
+/* ---- Photo slideshow ---- */
+.photo-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--photo-placeholder);
+  isolation: isolate;
+}
+.photo-slide {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: photo-in 1.6s ease both;
+}
+@keyframes photo-in { from { opacity: 0; } }
+.photo-status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 70%;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  color: var(--text-secondary);
+  font-size: 26px;
+  text-align: center;
+}
+.photo-scrim {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  padding: 200px 40px 40px;
+  background: linear-gradient(to top, rgba(8, 8, 10, .88), rgba(8, 8, 10, .6) 45%, rgba(8, 8, 10, 0));
+}
+.photo-bottom { display: flex; align-items: flex-end; justify-content: space-between; gap: 40px; }
+.photo-caption { flex: 1 1 auto; min-width: 0; }
+.photo-kicker { color: var(--accent); }
+.photo-album {
+  margin: 10px 0 8px;
+  overflow: hidden;
+  font-size: 52px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.photo-meta { margin: 0; color: var(--text-secondary); font-size: 22px; font-variant-numeric: tabular-nums; }
+.photo-bottom > .pill { flex: none; }
+/* Revealed album list: a single row; focus scrolls it sideways, the photo stays visible above. */
+.album-row {
+  display: flex;
+  gap: 12px;
+  margin: 0 -40px 28px;
+  padding: 8px 40px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  animation: row-in .25s ease both;
+}
+.album-row::-webkit-scrollbar { display: none; }
+.album-row .pill { flex: none; max-width: 420px; }
+@keyframes row-in { from { opacity: 0; transform: translateY(12px); } }
+.pair-card {
+  position: absolute;
+  top: 40px;
+  left: 40px;
+  z-index: 1;
+  max-width: 560px;
+  padding: 28px 32px;
+  border-radius: var(--radius-card-inner);
+  background: rgba(15, 16, 18, .92);
+  font-size: 22px;
+}
+.pair-card p { margin: 0; }
+.pair-card .label { color: var(--accent); margin-bottom: 12px; }
+.pair-card .pair-code { margin: 14px 0 10px; color: var(--accent); font-size: 64px; font-weight: 500; letter-spacing: .06em; font-variant-numeric: tabular-nums; }
+.pair-card .pair-code span + span { margin-left: .4em; }
+.pair-card .pair-expiry { color: var(--text-label); font-size: 18px; }
+
+/* ---- Right rail ---- */
+.rail {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  gap: 26px;
+}
+.rail .label { margin-bottom: 14px; }
+
+.clock-time {
+  display: flex;
+  align-items: baseline;
+  font-size: 148px;
+  font-weight: 300;
+  line-height: .9;
+  letter-spacing: -.035em;
+  font-variant-numeric: tabular-nums;
+}
+.clock-period { margin-left: 16px; color: var(--text-secondary); font-size: 36px; font-weight: 400; letter-spacing: .02em; }
+.clock-date { margin-top: 14px; color: var(--text-secondary); font-size: 30px; }
+
+.weather-now {
+  padding: 24px 28px;
+  border-radius: var(--radius-card-inner);
+  background: var(--surface);
+}
+.wn-main { display: flex; align-items: center; gap: 22px; }
+.wn-icon { width: 84px; height: 84px; }
+.wn-temp { font-size: 96px; font-weight: 300; line-height: 1; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.wn-summary { margin: 10px 0 0; overflow: hidden; color: var(--text-secondary); font-size: 22px; text-overflow: ellipsis; white-space: nowrap; }
+.wn-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 20px 0 0; padding-top: 18px; border-top: 1px solid var(--hairline); }
+.wn-stats dt { display: flex; align-items: center; gap: 6px; color: var(--text-label); font-size: 16px; }
+.wn-stats dt .icon { width: 20px; height: 20px; }
+.wn-stats dd { margin: 6px 0 0; font-size: 26px; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Placeholders keep every weather slot in place while loading or offline. */
+.weather-now.is-placeholder .wn-icon { opacity: .35; }
+.weather-now.is-placeholder .wn-temp, .weather-now.is-placeholder dd { color: var(--text-label); }
+.hours-chart.is-placeholder .chart-line { stroke: var(--text-label); stroke-dasharray: 2 10; opacity: .5; }
+.hours-chart.is-placeholder .chart-mark circle { stroke: var(--text-label); opacity: .5; }
+.hours-chart.is-placeholder .chart-temp { fill: var(--text-label); }
+.days.is-placeholder .day-temps, .days.is-placeholder .day-temps strong { color: var(--text-label); }
+.day-icon-empty { display: block; border-radius: 50%; border: 2px dashed var(--hairline); }
+
+.hours { min-height: 0; display: flex; flex-direction: column; }
+.hours-chart { position: relative; flex: 1; min-height: 0; }
+.hours-chart svg { position: absolute; inset: 0; display: block; overflow: visible; }
+.hours-chart { min-height: 150px; }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
+.chart-mark circle { fill: var(--bg); stroke: var(--accent); stroke-width: 3; }
+.chart-temp { fill: var(--text); font-size: 20px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.chart-time { fill: var(--text-label); font-size: 16px; }
+
+.days { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
+.day {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 14px 6px 12px;
+  border-radius: var(--radius-tile);
+  background: var(--surface);
+  text-align: center;
+}
+.day-name { color: var(--text-secondary); font-size: 18px; }
+.day-icon { width: 40px; height: 40px; }
+.day-temps { color: var(--text-secondary); font-size: 18px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.day-temps strong { color: var(--text); font-size: 22px; font-weight: 600; }
+.day-rain { min-height: 20px; color: var(--rain); font-size: 16px; font-weight: 500; line-height: 20px; }
+
+.rail-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--text-label); font-size: 16px; }
+.rail-footer > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- Weather icon colours ---- */
+.weather-icon { color: var(--cloud); }
+.weather-icon .i-sun, .weather-icon .i-moon { color: var(--accent); stroke: var(--accent); }
+.weather-icon .i-cloud { stroke: var(--cloud); }
+.weather-icon .i-rain { stroke: var(--rain); }
+.wn-stats .icon { color: var(--text-label); }
+
+@media (prefers-reduced-motion: reduce) { .photo-slide { animation-duration: .01s; } }

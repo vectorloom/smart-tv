@@ -17,10 +17,13 @@ local checkout to be clean and the requested 40-character revision to equal
   password or accept a new host key automatically.
 - Production must have Docker Compose, `curl`, `python3`, and the standard shell
   utilities used by the script. The script supplies the known non-secret
-  `SMART_TV_IMMICH_ADDRESSES=10.0.0.11` value that production previously received
-  as a shell export. Other Compose interpolation must resolve in Compose's
-  existing project context. The script does not assume `.env`, pass an
-  `--env-file`, or use the protected backup as configuration.
+  `SMART_TV_IMMICH_ADDRESSES=10.0.0.11` and validated
+  `SMART_TV_BIND=10.0.0.11` values directly to each isolated Compose invocation.
+  The bind address is checked against the approved production address before
+  preflight and again remotely before deployment. Other Compose interpolation
+  must resolve from Compose's project `.env` context or its declared defaults;
+  interactive shell exports are intentionally not inherited. The script does
+  not pass an `--env-file` or use the protected backup as configuration.
 - The dashboard must be running as `smart-tv-dashboard-1` under project
   `smart-tv`, with the expected Compose file labels, published address, protected
   runtime configuration, `smart-tv_settings` mount, and read-only certificate
@@ -40,12 +43,11 @@ running dashboard, the script stops before transferring the image. It also
 refuses to overwrite an existing remote image tag for the requested SHA. Do not
 loosen these checks by copying the protected backup into the checkout.
 
-The known address export is the only shell-exported interpolation value
-currently established by the available evidence. If production relies on other
-values exported only in an interactive shell, the isolated SSH command will not
-inherit them and preflight will stop when its rendered configuration differs
-from the running dashboard. Read-only verification must establish the source
-for those values before changing the script.
+The previous deployment wrapper cleared the remote environment and supplied
+only `SMART_TV_IMMICH_ADDRESSES`; this caused `SMART_TV_BIND` to fall back to
+Compose's `127.0.0.1` default even though the running dashboard is intended to
+bind `10.0.0.11`. The deployment wrapper now supplies the approved bind address
+consistently for preflight, recreation, and rollback.
 
 ## Safe use
 
@@ -91,8 +93,18 @@ build, and browser tests before building the Docker image. It performs a
 read-only remote preflight before transferring the image. The transfer uses
 `docker save` over SSH directly into `docker load`; source files, `.env`,
 certificates, and credentials are not transferred. A temporary Compose override
-in remote `/tmp` selects the SHA-tagged image without changing either production
-Compose file or replacing the prior `latest` image tag.
+in remote `/tmp` is used only to render and validate the new image's
+configuration; it is never used to recreate the container.
+
+Before recreating, the script tags the previous image as
+`<repo>:rollback-<id>-<time>-<pid>` and then moves the dashboard's Compose image
+reference (normally `smart-tv-dashboard:latest`) to the SHA-tagged image. The
+dashboard is then recreated from `compose.yaml` and `compose.settings.yaml` only.
+So after a deployment the running container is exactly what a plain
+`docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml up` produces:
+its `com.docker.compose.project.config_files` label lists just those two files,
+and the next preflight accepts it. Neither production Compose file is changed.
+Rollback and SHA tags accumulate; remove old ones manually when no longer needed.
 
 Only `dashboard` is targeted with `up -d --no-build --no-deps dashboard`. The
 script never runs `docker compose down` and compares the IDs of the other running
@@ -100,10 +112,12 @@ services in project `smart-tv` before and after deployment. The named settings
 volume, certificate mounts, protected environment, and admin service are
 expected to remain in place.
 
-Recreating the dashboard causes a short interruption and loses in-memory phone
-pairing sessions; phones must pair again. If startup or the bounded health poll
-fails, the script attempts to tag the previous image under a rollback tag and
-recreate only `dashboard` with that image. It reports deployment and rollback
+Recreating the dashboard causes a short interruption. Phone pairings and the last
+good weather forecast survive it when the data volume (below) is mounted; without
+it they are kept in memory only and phones must pair again. If startup or the bounded health poll
+fails, the script points the Compose image reference back at the previous image
+and recreates only `dashboard`. Success in either direction also requires the
+container, the Compose image tag, and the `config_files` label to agree. It reports deployment and rollback
 health separately. Rollback cannot reverse application data migrations,
 external side effects, or a simultaneous host/network/storage failure, and it
 does not delete the failed SHA-tagged image. If rollback does not pass health,
@@ -117,3 +131,64 @@ environment, bind mounts, volume, published `10.0.0.11:8080` binding, labels,
 and CPU architecture match the running container. If that cannot be established,
 the script intentionally stops before image transfer; do not supply the protected
 backup as `--env-file`.
+
+## Recovering a dashboard started by the earlier override-based script
+
+Earlier versions of the script recreated the dashboard with the `/tmp` override.
+Such a container fails preflight with "running dashboard does not use the
+expected Compose files": its `config_files` label lists the production files
+twice plus a deleted `/tmp/smart-tv-dashboard-image.*.yaml`, and it runs a
+SHA-tagged image that Compose does not resolve to. To adopt it without changing
+which image runs, on the server (check first what `latest` currently points to):
+
+```bash
+cd /home/lazyboy/projects/smart-tv
+docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}} {{.Config.Image}} {{.Image}}' smart-tv-dashboard-1
+docker image inspect --format '{{.Id}}' smart-tv-dashboard:latest
+docker tag "$(docker inspect --format '{{.Image}}' smart-tv-dashboard-1)" smart-tv-dashboard:latest
+export SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND=10.0.0.11
+docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml config --quiet
+docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml up -d --no-build --no-deps --force-recreate dashboard
+```
+
+This is a short interruption with the same image. Then rerun
+`scripts/deploy.sh --preflight-only "$(git rev-parse HEAD)"`.
+
+## Data volume (runtime state)
+
+The image defaults two small state files to `/app/data`:
+
+| File | Setting (image default) | Contents |
+| --- | --- | --- |
+| `/app/data/weather.json` | `Weather__CacheFile` | Last good Open-Meteo forecast, served (marked stale, with its time) while Open-Meteo is unreachable; ignored after a day |
+| `/app/data/remote-sessions.json` | `Remote__SessionFile` | Paired phone-remote sessions: SHA-256 hashes of the TV and phone credentials and the expiry (30 days, sliding on each reconnect). No raw credentials, codes or addresses. Written with mode 0600 |
+
+`compose.yaml` mounts the writable named volume `smart-tv_data` at `/app/data`. The
+container root filesystem stays read-only; the image creates `/app/data` owned by the
+unprivileged application user, so a new named volume inherits that ownership. The
+settings volume stays read-only for the dashboard and is not used for this state.
+
+These defaults are image `ENV` values, not Compose environment entries, so the
+deployment script's environment comparison is unaffected. If either file cannot be
+written (for example, no volume is mounted and the root filesystem is read-only), the
+dashboard logs a warning and keeps the state in memory only.
+
+### One-time production change (requires approval)
+
+`scripts/deploy.sh` never edits the production Compose files. Before or after the
+first deployment of an image with these defaults, update
+`/home/lazyboy/projects/smart-tv/compose.yaml` on the server to match this
+repository (the `data:/app/data` volume entry under `dashboard` and the top-level
+`volumes: data:`), then recreate only the dashboard:
+
+```bash
+cd /home/lazyboy/projects/smart-tv
+docker compose -f compose.yaml -f compose.settings.yaml config --quiet   # validates the merge
+docker compose -f compose.yaml -f compose.settings.yaml up -d --no-deps dashboard
+```
+
+Use the same `SMART_TV_IMMICH_ADDRESSES` and `SMART_TV_BIND` exports that the
+deployment script supplies. The existing preflight checks still require the
+`smart-tv_settings` read-only mount and the certificate mounts; the additional data
+mount does not affect them. To remove all stored state, stop the dashboard and run
+`docker volume rm smart-tv_data`; every phone then pairs again.

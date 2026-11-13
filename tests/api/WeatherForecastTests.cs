@@ -151,6 +151,47 @@ public sealed class WeatherForecastTests
     }
 
     [Fact]
+    public async Task RestartedServiceServesLastSnapshotWithItsTimestampWhenProviderFails()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"weather-{Guid.NewGuid():N}.json");
+        try
+        {
+            var clock = new TestClock();
+            var first = new WeatherForecastService(new HttpClient(new StubHandler(_ => Response(HttpStatusCode.OK, Payload))),
+                new WeatherOptions(32.7767, -96.7970), clock, file);
+            var live = await first.GetForecast(CancellationToken.None);
+
+            // API restarts an hour later while Open-Meteo is down: the saved forecast is served, marked stale.
+            clock.Advance(TimeSpan.FromHours(1));
+            var restarted = new WeatherForecastService(new HttpClient(new StubHandler(_ => Response(HttpStatusCode.BadGateway, "{}"))),
+                new WeatherOptions(32.7767, -96.7970), clock, file);
+            var served = await restarted.GetForecast(CancellationToken.None);
+            Assert.True(served.Stale);
+            Assert.Equal(live.LastUpdated, served.LastUpdated);
+            Assert.Equal(12, served.Hourly.Length);
+            Assert.Equal(7, served.Daily.Length);
+
+            // A snapshot older than a day, or for another location, is not served.
+            clock.Advance(TimeSpan.FromDays(1));
+            var old = new WeatherForecastService(new HttpClient(new StubHandler(_ => Response(HttpStatusCode.BadGateway, "{}"))),
+                new WeatherOptions(32.7767, -96.7970), clock, file);
+            Assert.Equal(503, (await Assert.ThrowsAsync<DashboardException>(() => old.GetForecast(CancellationToken.None))).Status);
+        }
+        finally { File.Delete(file); }
+    }
+
+    [Fact]
+    public async Task ColdStartFailureRetriesTheProviderWithinSeconds()
+    {
+        var requests = 0;
+        var (service, _, clock) = Create(_ => ++requests == 1 ? Response(HttpStatusCode.BadGateway, "{}") : Response(HttpStatusCode.OK, Payload));
+        await Assert.ThrowsAsync<DashboardException>(() => service.GetForecast(CancellationToken.None));
+        clock.Advance(TimeSpan.FromSeconds(15));
+        Assert.False((await service.GetForecast(CancellationToken.None)).Stale);
+        Assert.Equal(2, requests);
+    }
+
+    [Fact]
     public void ReadsAndValidatesEnvironmentCoordinates()
     {
         var defaults = WeatherOptions.FromConfiguration(new ConfigurationBuilder().Build());

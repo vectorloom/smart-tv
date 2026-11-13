@@ -31,7 +31,8 @@ test('two browser contexts pair, route commands to one tab, reconnect both ends 
   const other = await page.context().newPage();
   try {
     await mockGallery(page); await mockGallery(other); await mockGallery(phone);
-    await page.goto('/'); await other.goto('/');
+    // Pairing lives on the TV's Settings screen (/preferences).
+    await page.goto('/preferences'); await other.goto('/');
     await phone.goto('http://127.0.0.1:5173/remote');
     await expect(page.getByRole('button', { name: 'Pair phone', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'Pair phone', exact: true }).click();
@@ -41,7 +42,12 @@ test('two browser contexts pair, route commands to one tab, reconnect both ends 
     await expect(phone.getByRole('status')).toHaveText('Connected');
     await expect(page.locator('.pair-code')).toHaveCount(0);
     expect(await phone.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-    await page.getByRole('button', { name: /Album A/ }).focus();
+    await expect(page.getByRole('button', { name: 'Unpair this TV' })).toBeVisible();
+    // The phone's Home button takes the TV home; its first arrow reveals the album row.
+    await phone.getByRole('button', { name: 'Home', exact: true }).click();
+    await expect(page.locator('.home')).toBeVisible();
+    await phone.getByRole('button', { name: 'Right →', exact: true }).click();
+    await expect(page.getByRole('button', { name: /Album A/ })).toBeFocused();
     await phone.getByRole('button', { name: 'Right →', exact: true }).click();
     await expect(page.getByRole('button', { name: /Album B/ })).toBeFocused();
     await phone.getByRole('button', { name: '← Left', exact: true }).click();
@@ -49,7 +55,7 @@ test('two browser contexts pair, route commands to one tab, reconnect both ends 
     await phone.getByRole('button', { name: 'Right →', exact: true }).click();
     await phone.getByRole('button', { name: 'Select', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Album B', exact: true })).toBeVisible();
-    await expect(other.getByRole('heading', { name: 'A little of everything. All in one place.', exact: true, }),).toBeVisible();
+    await expect(other.locator('.home')).toBeVisible();
     await phone.getByRole('button', { name: 'Play / Pause', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await phone.getByRole('button', { name: 'Play / Pause', exact: true }).click();
@@ -93,13 +99,25 @@ test('two browser contexts pair, route commands to one tab, reconnect both ends 
     await phone.getByRole('button', { name: 'Next', exact: true }).click();
     await expect(page.getByRole('dialog').getByRole('img')).toHaveAttribute('alt', 'Two');
     await disconnect(page);
-    await expect(page.locator('.pairing')).toContainText('Connected');
     await expect(phone.getByRole('status')).toHaveText('Connected');
     await phone.getByRole('button', { name: 'Back', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await phone.getByRole('button', { name: 'Home', exact: true }).click();
     await expect(page.getByRole('button', { name: /Album B/ })).toBeFocused();
-    await page.getByRole('button', { name: 'Unpair phone' }).click();
+    // Pairing survives a TV reload: the stored credential resumes the paired session.
+    await page.reload();
+    await expect(phone.getByRole('status')).toHaveText('Connected');
+    await expect(page.getByRole('button', { name: 'All albums (2)' })).toBeVisible();
+    // A reloaded home screen is idle again: no album row, nothing focused.
+    await expect(page.locator('.album-row')).toHaveCount(0);
+    await phone.getByRole('button', { name: 'Right →', exact: true }).click();
+    await expect(page.getByRole('button', { name: /Album A/ })).toBeFocused();
+    await page.goto('/preferences');
+    await expect(phone.getByRole('status')).toHaveText('Connected');
+    // "Unpair this TV" needs a second press; it ends the TV's session and revokes the phone.
+    await page.getByRole('button', { name: 'Unpair this TV' }).click();
+    await expect(phone.getByRole('status')).toHaveText('Connected');
+    await page.getByRole('button', { name: 'Press again to unpair' }).click();
     await expect(phone.getByLabel('Pairing code from your TV')).toBeVisible();
     await expect(phone.getByRole('button', { name: 'Next', exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Pair phone', exact: true }).click();
@@ -108,7 +126,7 @@ test('two browser contexts pair, route commands to one tab, reconnect both ends 
     await expect(phone.getByRole('status')).toHaveText('Connected');
     await phone.getByRole('button', { name: 'Unpair phone' }).click();
     await expect(phone.getByLabel('Pairing code from your TV')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Unpair phone' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Unpair this TV' })).toHaveCount(0);
   } finally { await phoneContext.close(); await other.close(); }
 });
 

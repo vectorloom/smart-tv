@@ -29,7 +29,8 @@ public sealed record ImmichSettings(Uri BaseUrl, string ApiKey, HashSet<Guid> Al
 }
 
 public sealed record Album(Guid Id, string Name, int AssetCount, Guid? ThumbnailId);
-public sealed record Photo(Guid Id, string Name);
+// TakenAt is Immich's localDateTime (wall-clock time where the photo was taken, ISO 8601).
+public sealed record Photo(Guid Id, string Name, string? TakenAt = null);
 public sealed record PhotoPage(Photo[] Items, int? NextPage);
 public sealed record Media(byte[] Bytes, string ContentType);
 
@@ -40,6 +41,9 @@ public sealed class ImmichClient(HttpClient http, ImmichSettings settings)
         if (string.IsNullOrWhiteSpace(settings.ApiKey) || settings.ApiKey.StartsWith("replace-"))
             throw new DashboardException(503, "Configure the dashboard's dedicated Immich API key.");
     }
+
+    /// <summary>Cheap, offline check that the key is configured and the album is selected.</summary>
+    public void EnsureSelected(Guid album) { CheckConfigured(); CheckAlbum(album); }
 
     private void CheckAlbum(Guid id)
     {
@@ -139,7 +143,8 @@ public sealed class ImmichClient(HttpClient http, ImmichSettings settings)
         using var doc = await Search(album, page, null, ct);
         var assets = doc.RootElement.GetProperty("assets");
         var items = assets.GetProperty("items").EnumerateArray().Where(IsPhoto)
-            .Select(a => new Photo(a.GetProperty("id").GetGuid(), a.GetProperty("originalFileName").GetString() ?? "Photo")).ToArray();
+            .Select(a => new Photo(a.GetProperty("id").GetGuid(), a.GetProperty("originalFileName").GetString() ?? "Photo",
+                a.TryGetProperty("localDateTime", out var taken) && taken.ValueKind == JsonValueKind.String ? taken.GetString() : null)).ToArray();
         var token = assets.GetProperty("nextPage").GetString();
         int? next = null;
         if (token is not null)

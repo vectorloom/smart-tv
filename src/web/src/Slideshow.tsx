@@ -110,8 +110,14 @@ export function Slideshow({ album, photos, initialId, onExit, onHome }: Props) {
     // Do not cancel a preload as that same URL becomes the displayed image.
     // Prefetching is advisory; playback never waits for a preload promise.
   }, [album, index, order]);
+  // Close when the viewer's own fullscreen is left (e.g. the browser's Esc), but ignore a late exit
+  // event from the previous viewer when a photo is reopened quickly.
+  const enteredFullscreen = useRef(false);
   useEffect(() => {
-    const changed = () => { if (!document.fullscreenElement) onExit(); };
+    const changed = () => {
+      if (document.fullscreenElement) enteredFullscreen.current = true;
+      else if (enteredFullscreen.current) onExit();
+    };
     document.addEventListener('fullscreenchange', changed);
     return () => document.removeEventListener('fullscreenchange', changed);
   }, [onExit]);

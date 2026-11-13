@@ -12,16 +12,18 @@ test.beforeEach(async ({ page }) => {
 test('TV remote navigation, photo frame presentation, and focus restoration', async ({ page }) => {
   await page.goto('/');
   expect(await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight,}))).toEqual({ width: 1920, height: 1080 });
+  await expect(page.getByRole('button', { name: 'All albums (2)' })).toBeVisible();
+  // The ambient home screen shows no focus until the first key press, which reveals the album row.
+  await page.keyboard.press('ArrowRight');
   const album = page.getByRole('button', { name: /Weekend wanderings/ });
   await expect(album).toBeFocused();
-  await expect(album).toHaveCSS('outline-style', 'solid');
-  await expect(album).toHaveCSS('outline-width', '4px');
-  await expect(album).toHaveCSS('outline-color', 'rgb(255, 199, 102)');
+  await expect(album).toHaveCSS('box-shadow', 'rgb(242, 163, 58) 0px 0px 0px 4px');
   await page.keyboard.press('ArrowRight');
   await expect(page.getByRole('button', { name: /Everyday favorites/ })).toBeFocused();
-  await expect(page.getByRole('button', { name: /Everyday favorites/ })).toHaveCSS('outline-width', '4px');
+  await expect(page.getByRole('button', { name: /Everyday favorites/ })).toHaveCSS('box-shadow', 'rgb(242, 163, 58) 0px 0px 0px 4px');
   await page.keyboard.press('ArrowLeft');
   await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/photos\/album$/);
   await expect(page.getByRole('button', { name: 'Play album' })).toBeEnabled();
   await page.getByRole('button', { name: 'Open Mountain morning' }).focus();
   await page.keyboard.press('Enter');
@@ -48,14 +50,13 @@ test('TV remote navigation, photo frame presentation, and focus restoration', as
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Open Mountain morning' })).toBeFocused();
   await expect(page.getByRole('heading', { name: 'Weekend wanderings', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Pair phone', exact: true })).toBeVisible();
   await page.screenshot({ path: 'test-results/gallery-1080p.png', fullPage: true });
 });
 
 test('mobile layout fits the viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
-  await expect(page.getByRole('button', { name: /Weekend wanderings/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'All albums (2)' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
@@ -63,8 +64,7 @@ test('frame presentation and Backspace exit work when fullscreen is denied', asy
   await page.addInitScript(() => {
     document.documentElement.requestFullscreen = () => Promise.reject(new Error('Fullscreen denied'));
   });
-  await page.goto('/');
-  await page.getByRole('button', { name: /Weekend wanderings/ }).click();
+  await page.goto('/photos/album');
   const play = page.getByRole('button', { name: 'Play album' });
   await play.click();
   await expect(page.getByRole('dialog')).toBeFocused();
@@ -79,8 +79,7 @@ test('frame presentation and Backspace exit work when fullscreen is denied', asy
 
 test('Select reveals reusable TV controls, interval editing survives timeout, and hiding restores focus', async ({ page }) => {
   await page.clock.install();
-  await page.goto('/');
-  await page.getByRole('button', { name: /Weekend wanderings/ }).click();
+  await page.goto('/photos/album');
   await page.getByRole('button', { name: 'Play album' }).click();
   const dialog = page.getByRole('dialog');
   const overlay = page.locator('.slide-bottom');
