@@ -68,7 +68,7 @@ button:focus, select:focus, input:focus, a:focus-visible {
 .remote-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; margin-bottom: 22px; }
 .remote-actions button:nth-child(3) { grid-column: 1 / -1; }
 .remote-help { color: var(--muted); }
-.settings-page { max-width: 1100px; margin: auto; padding: 40px 24px; }
+.settings-page { max-width: 1100px; margin: auto; padding: 40px 24px; overflow-wrap: anywhere; }
 .settings-page h1 { font-size: 46px; }
 .settings-form { display: grid; gap: 18px; margin-top: 26px; }
 .settings-form > label { font-size: 21px; }

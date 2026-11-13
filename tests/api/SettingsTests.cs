@@ -66,8 +66,11 @@ public class SettingsTests(SettingsMaterial material) : IClassFixture<SettingsMa
             var key = new string('a', length);
             var masked = SettingsStore.MaskKey(key)!;
             Assert.False(masked.Contains(key));
-            Assert.True(masked == (length <= 8 ? new string('•', 8) : "aaaa" + new string('•', length - 8) + "aaaa"));
+            Assert.True(masked == (length <= 8 ? new string('•', 8) : "aaaa" + new string('•', Math.Min(length - 8, SettingsStore.MaxMaskDots)) + "aaaa"));
         }
+        // A Home Assistant token is a ~180-character JWT; its identifier must stay short.
+        var token = "eyJh" + new string('x', 175) + "XKIU";
+        Assert.Equal("eyJh" + new string('•', SettingsStore.MaxMaskDots) + "XKIU", SettingsStore.MaskKey(token));
     }
     [Fact]
     public void EncryptedRoundTripAndRestartRetainSettingsWithoutPlaintextSecrets()

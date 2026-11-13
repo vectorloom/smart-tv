@@ -94,10 +94,12 @@ public sealed class SettingsStore(string? directory, ImmichSettings environment,
     }
 
     private static DashboardException Unavailable() => new(503, "Stored settings are unavailable. Use the documented administrator recovery procedure; environment fallback is disabled while stored settings exist.");
-    // Short values have no visible characters: prefix/suffix would disclose the key.
+    // Short values have no visible characters: prefix/suffix would disclose the key. The dots are capped
+    // so a long credential (a ~180-character Home Assistant token) stays a short identifier, not a page-wide line.
+    public const int MaxMaskDots = 16;
     public static string? MaskKey(string? key) => string.IsNullOrWhiteSpace(key) ? null
         : key.Length <= 8 ? new string('•', 8)
-        : key[..4] + new string('•', key.Length - 8) + key[^4..];
+        : key[..4] + new string('•', Math.Min(key.Length - 8, MaxMaskDots)) + key[^4..];
 
     private string? MaskStoredKey(StoredSettings doc)
     {
