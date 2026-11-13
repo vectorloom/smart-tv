@@ -1,7 +1,10 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 
 // The wind map left the home screen in Stage 1 and lives on the /weather screen.
-test('weather metrics and wind grid render on the Weather screen without overflow or focus stops', async ({ page }) => {
+type Observed = { count: number; southFraction: number; speedRatio: number; frameRate: number };
+
+/** Opens /weather with synthetic data, instrumenting the wind canvas; returns what it drew in 2.5 s. */
+async function observeWeather(page: Page): Promise<Observed> {
   await page.addInitScript(() => {
     const segments: Array<[number, number, number, number]> = [];
     const frameTimes: number[] = [];
@@ -75,8 +78,20 @@ test('weather metrics and wind grid render on the Weather screen without overflo
     return { count: segments.length, southFraction: steps.length / segments.length,
       speedRatio: Math.max(...steps) / Math.min(...steps), frameRate: elapsed ? (frames.length - 1) / elapsed : 0 };
   });
+  return observed;
+}
+
+test('weather metrics and wind grid render on the Weather screen without overflow or focus stops', async ({ page }) => {
+  const observed = await observeWeather(page);
   expect(observed.count).toBeGreaterThan(1000);
   expect(observed.southFraction).toBeGreaterThan(.99);
   expect(observed.speedRatio).toBeGreaterThan(1.5);
-  expect(observed.frameRate).toBeGreaterThan(25);
+});
+
+// Frame rate depends on the machine running the test as much as on the code (a warm or throttled
+// laptop measures under 25 fps on unchanged code), so the deploy gate skips @perf; run it by hand
+// after changing the wind map: bash scripts/test-browser.sh --grep @perf
+test('wind map animates smoothly', { tag: '@perf' }, async ({ page }) => {
+  const observed = await observeWeather(page);
+  expect(observed.frameRate, 'wind map frames per second (needs a machine that is not throttled)').toBeGreaterThan(25);
 });

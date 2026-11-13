@@ -157,8 +157,8 @@ printf 'Running API tests...\n'
 bash scripts/test-api.sh
 printf 'Building browser test host...\n'
 bash scripts/build-test-host.sh
-printf 'Running browser tests...\n'
-bash scripts/test-browser.sh
+printf 'Running browser tests (machine-dependent @perf checks excluded)...\n'
+bash scripts/test-browser.sh --grep-invert @perf
 
 result=$(remote_preflight) || die 'remote read-only preflight failed; no production changes were made'
 IFS=$'\t' read -r remote_platform image_repo <<<"$result"
