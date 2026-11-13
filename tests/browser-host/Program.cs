@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using SmartTv;
+using SmartTv.Testing;
 
 // Separate test-only executable. It is never copied to the Docker runtime image.
 var project = Path.GetFullPath(args[0]);
@@ -36,14 +37,19 @@ Dictionary<string, string?> Configuration(bool admin) => new() {
     ["Settings:WrappingKey"] = Path.Combine(material, "wrapping.key"),
     ["Immich:BaseUrl"] = "http://127.0.0.1:5091/api/", ["Immich:Targets"] = "http://127.0.0.1:5091/api/", ["Immich:AllowedAddresses"] = "127.0.0.1",
     ["Immich:ApiKey"] = "synthetic-browser-key", ["Immich:AlbumIds"] = owned,
+    ["HomeAssistant:Targets"] = "http://127.0.0.1:5092/api/", ["HomeAssistant:AllowedAddresses"] = "127.0.0.1",
 };
 var webRoot = Path.Combine(project, "src", "web", "dist");
 WebApplication Host(bool admin) => DashboardHost.Build(admin ? [] : ["--urls", "http://127.0.0.1:5082"], builder => {
     builder.Configuration.AddInMemoryCollection(Configuration(admin)); builder.Logging.ClearProviders();
+    // Notice an administrator save within a second instead of ten.
+    builder.Services.AddSingleton(HomeAssistantOptions.Default with { SettingsPoll = TimeSpan.FromSeconds(1) });
 }, webRoot);
 await using var publicHost = Host(false);
 await using var adminHost = Host(true);
+await using var homeAssistant = FakeHomeAssistant.WithSampleHome();
+await homeAssistant.Start(5092);
 await fake.StartAsync(); await adminHost.StartAsync(); await publicHost.StartAsync();
-Console.WriteLine("Synthetic settings test hosts ready (public 5082, HTTPS admin 5443).");
+Console.WriteLine("Synthetic settings test hosts ready (public 5082, HTTPS admin 5443, Home Assistant 5092).");
 await publicHost.WaitForShutdownAsync();
 await adminHost.StopAsync(); await fake.StopAsync(); await fake.DisposeAsync();

@@ -208,3 +208,45 @@
 .facts div { display: flex; justify-content: space-between; gap: 24px; padding-bottom: 14px; border-bottom: 1px solid var(--hairline); }
 .facts dt { color: var(--text-label); }
 .facts dd { margin: 0; font-variant-numeric: tabular-nums; }
+
+/* ---- Home automation: toggle tiles for lights and switches, read-only climate cards ---- */
+.device-group { margin-bottom: 44px; }
+.device-group > .label { margin-bottom: 18px; }
+.device-grid, .climate-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; margin: 0; padding: 0; list-style: none; }
+.stage .device-tile {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 18px;
+  row-gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-height: 148px;
+  padding: 26px 28px;
+  border: 2px solid transparent;
+  border-radius: var(--radius-tile);
+  background-color: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.device-tile .device-icon { grid-row: 1 / 3; width: 44px; height: 44px; color: var(--text-label); }
+.device-name { overflow: hidden; font-size: 26px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.device-state { color: var(--text-label); font-size: 20px; font-variant-numeric: tabular-nums; }
+.stage .device-tile.is-on { border-color: rgba(242, 163, 58, .38); background-color: var(--surface-raised); }
+.device-tile.is-on .device-icon { color: var(--accent); }
+.device-tile.is-on .device-state { color: var(--text-secondary); }
+.device-tile.is-pending .device-state { color: var(--accent); }
+.stage .device-tile:disabled { opacity: .5; cursor: default; }
+.stage .device-tile:hover:not(:disabled) { background-color: var(--surface-hover); }
+.climate-card { padding: 26px 28px; border-radius: var(--radius-tile); background: var(--surface); }
+.climate-card.is-unavailable { opacity: .5; }
+.stage .climate-card:focus { position: relative; z-index: 2; outline: none; box-shadow: var(--focus-ring); background-image: linear-gradient(var(--accent-tint), var(--accent-tint)); }
+.climate-head { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.climate-head .device-icon { width: 36px; height: 36px; color: var(--text-label); }
+.climate-now { margin: 16px 0 6px; font-size: 64px; font-weight: 300; line-height: 1; font-variant-numeric: tabular-nums; }
+.climate-mode, .climate-target { margin: 0; color: var(--text-secondary); font-size: 20px; }
+.climate-target { margin-top: 6px; color: var(--text-label); }
+/* Offline: the last known state stays readable but visibly not current. */
+.home-automation-screen.is-stale .device-group { opacity: .6; }
+.screen-page .device-error { border-left: 6px solid var(--accent); }

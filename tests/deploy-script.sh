@@ -182,6 +182,7 @@ grep -Fq 'local_revision == "$sha"' scripts/deploy.sh || { echo 'FAIL: source re
 grep -Fq 'revision image tag already exists' scripts/deploy.sh || { echo 'FAIL: existing remote SHA image tag could be overwritten' >&2; exit 1; }
 grep -Fq 'docker info >/dev/null 2>&1 || exit 71' scripts/deploy.sh || { echo 'FAIL: remote Docker verification does not fail closed' >&2; exit 1; }
 grep -Fq 'SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND="$bind_address"' scripts/deploy.sh || { echo 'FAIL: isolated Compose environment does not supply both approved production values' >&2; exit 1; }
+[[ $(grep -Fc 'SMART_TV_HA_TARGETS=http://10.0.0.11:8123/api/ SMART_TV_HA_ADDRESSES=10.0.0.11 SMART_TV_IMMICH_ADDRESSES=10.0.0.11' scripts/deploy.sh) == 2 ]] || { echo 'FAIL: preflight and deploy must supply the same approved Home Assistant destination' >&2; exit 1; }
 [[ $(grep -Fc 'SMART_TV_BIND="$bind_address"' scripts/deploy.sh) -eq 2 ]] || { echo 'FAIL: preflight, deployment, and rollback do not share the approved bind address' >&2; exit 1; }
 [[ $(grep -Fc '[[ $bind_address == 10.0.0.11 ]]' scripts/deploy.sh) -eq 2 ]] || { echo 'FAIL: remote preflight and deployment do not fail closed on an unknown bind address' >&2; exit 1; }
 grep -Fq '"$production_bind_address" "$validator_b64"' scripts/deploy.sh || { echo 'FAIL: preflight does not receive the validated bind address' >&2; exit 1; }

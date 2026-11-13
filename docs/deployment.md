@@ -192,3 +192,26 @@ deployment script supplies. The existing preflight checks still require the
 `smart-tv_settings` read-only mount and the certificate mounts; the additional data
 mount does not affect them. To remove all stored state, stop the dashboard and run
 `docker volume rm smart-tv_data`; every phone then pairs again.
+
+## One-time production change for Home Assistant (requires approval)
+
+`compose.settings.yaml` gains `HomeAssistant__Targets` and `HomeAssistant__AllowedAddresses`
+for both `dashboard` and `admin`, and `scripts/deploy.sh` now supplies
+`SMART_TV_HA_TARGETS=http://10.0.0.11:8123/api/` and `SMART_TV_HA_ADDRESSES=10.0.0.11`.
+Preflight requires the running container's environment to match Compose exactly, so before
+the first deployment of an image with Home Assistant support, copy the repository's
+`compose.settings.yaml` to `/home/lazyboy/projects/smart-tv/` and recreate only the
+dashboard with the current image (older images ignore the new variables):
+
+```bash
+cd /home/lazyboy/projects/smart-tv
+export SMART_TV_HA_TARGETS=http://10.0.0.11:8123/api/ SMART_TV_HA_ADDRESSES=10.0.0.11
+export SMART_TV_IMMICH_ADDRESSES=10.0.0.11 SMART_TV_BIND=10.0.0.11
+docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml config --quiet
+docker compose -p smart-tv -f compose.yaml -f compose.settings.yaml up -d --no-build --no-deps --force-recreate dashboard
+# Confirm the dashboard container can reach Home Assistant on the LAN address:
+docker exec smart-tv-dashboard-1 bash -c 'exec 3<>/dev/tcp/10.0.0.11/8123 && echo reachable' 2>/dev/null || echo 'not reachable'
+```
+
+Then run `scripts/deploy.sh --preflight-only "$(git rev-parse HEAD)"` before deploying.
+Start the admin service with the same exports when entering the token.

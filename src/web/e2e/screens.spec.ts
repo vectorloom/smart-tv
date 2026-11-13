@@ -17,6 +17,16 @@ const daily = Array.from({ length: 7 }, (_, i) => ({
   date: `2026-11-${12 + i}`, highF: 74 - i, lowF: 51 - i, weatherCode: [0, 2, 61, 3, 95, 0, 1][i], condition: ['Clear sky', 'Partly cloudy', 'Light rain', 'Overcast', 'Thunderstorm', 'Clear sky', 'Mainly clear'][i], precipitationProbability: [0, 10, 70, 20, 40, 0, 5][i],
 }));
 
+// Enough devices to fill the screen: long names must ellipsize, and nothing may fall under 16px.
+const homeSnapshot = { status: 'live', message: null, entities: [
+  ...['Kitchen', 'Living room', 'Dining table pendant', 'Hallway', 'Primary bedroom ceiling and reading lamps', 'Porch'].map((name, i) => ({
+    id: `light.l${i}`, domain: 'light', name, state: i === 5 ? 'unavailable' : i % 2 ? 'off' : 'on', available: i !== 5, on: i % 2 === 0 && i !== 5,
+    toggleable: true, brightness: i % 2 === 0 ? 40 + i * 10 : null })),
+  { id: 'switch.fan', domain: 'switch', name: 'Ceiling fan', state: 'on', available: true, on: true, toggleable: true },
+  { id: 'climate.hall', domain: 'climate', name: 'Hallway thermostat', state: 'heat_cool', available: true, on: true, toggleable: false,
+    currentTemperature: 68.5, targetLow: 66, targetHigh: 72, hvacAction: 'idle', unit: '°F' },
+] };
+
 async function mockApi(page: Page, list = albums) {
   // A local stand-in for the remote-control socket: these tests load many pages quickly and would
   // otherwise hit the server's per-address connection limit. The pairing flow itself is in remote.spec.
@@ -38,6 +48,8 @@ async function mockApi(page: Page, list = albums) {
       const count = list.find(a => a.id === photos[1])?.assetCount ?? 0;
       return route.fulfill({ json: { items: Array.from({ length: count }, (_, i) => ({ id: `${photos[1]}-${i + 1}`, name: `${photos[1]} ${i + 1}` })), nextPage: null } });
     }
+    if (path === '/api/home/events') return route.fulfill({ status: 200, contentType: 'text/event-stream',
+      body: `retry: 600000\nevent: snapshot\ndata: ${JSON.stringify(homeSnapshot)}\n\n` });
     if (path === '/api/slideshow/next') return route.fulfill({ json: { albumId: 'lake', albumName: 'Summer at the lake', photoId: 'lake-1', takenAt: '2024-07-04T18:30:00.000Z', index: 1, total: 14 } });
     if (path === '/api/weather') return route.fulfill({ json: {
       location: 'Coppell', lastUpdated: '2026-11-12T18:14:00Z', stale: false,
@@ -339,6 +351,7 @@ for (const [width, height] of [[1920, 1080], [960, 540]] as const) {
       } else await expect(page.locator('.stage h1, .stage .clock').first()).toBeVisible();
       if (name === 'photos') await expect(page.locator('.photo-row .thumb img').first()).toBeVisible();
       if (name === 'weather') await expect(page.locator('.week li')).toHaveCount(7);
+      if (name === 'automation') await expect(page.locator('.device-tile')).toHaveCount(7);
       if (width === 1920) await page.screenshot({ path: `test-results/screen-${name}.png`, animations: 'disabled' });
       // Open the rail (on home with the first key, elsewhere by focusing it) so its labels are checked too.
       if (name === 'home') await page.keyboard.press('ArrowDown');

@@ -7,6 +7,7 @@ import { useAlbums } from './albums';
 import type { Album, Photo } from './api';
 import { SCREEN_COMMAND, defaultFocus, findFocusKey, parentPath, zoneOf } from './focus';
 import { Home } from './Home';
+import { HomeAutomationScreen } from './HomeAutomationScreen';
 import { NavRail } from './NavRail';
 import { isEditing, moveFocus } from './navigation';
 import { PhotosScreen } from './PhotosScreen';
@@ -282,8 +283,7 @@ function Shell() {
         <Route path="/photos/:albumId" element={<AlbumScreen albums={albums} onOpenPhoto={openPhoto}
           onCloseViewer={closeViewer} onHome={goHome} />} />
         <Route path="/weather" element={<WeatherScreen />} />
-        <Route path="/home-automation" element={<PlaceholderScreen title="Home automation"
-          message="Lights, climate, scenes and cameras arrive here once Home Assistant is connected." />} />
+        <Route path="/home-automation" element={<HomeAutomationScreen />} />
         <Route path="/calendar" element={<PlaceholderScreen title="Calendar" message="No calendar is connected yet." />} />
         <Route path="/preferences" element={<PreferencesScreen remote={remote} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
